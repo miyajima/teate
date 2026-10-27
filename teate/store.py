@@ -50,7 +50,15 @@ class Ledger:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(path), timeout=30)
         self.db.row_factory = sqlite3.Row
+        # Back up existing evidence before the additive v0.5 schema migration.
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='assets'").fetchone():
+            backup_path = Path(str(path) + ".pre-v05")
+            if not backup_path.exists() and not self.db.execute("SELECT 1 FROM sqlite_master WHERE name='repair_runs'").fetchone():
+                with sqlite3.connect(str(backup_path)) as backup:
+                    self.db.backup(backup)
         self.db.executescript(SCHEMA)
+        from .jobs import Jobs
+        Jobs(self)
 
     def close(self):
         self.db.close()

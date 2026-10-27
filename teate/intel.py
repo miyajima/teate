@@ -7,7 +7,6 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -71,22 +70,15 @@ def _date(value: str) -> str | None:
 def parse_feed(raw: bytes) -> list[dict]:
     if b"\x00" in raw or re.search(br"<!DOCTYPE|<!ENTITY", raw, re.I):
         raise TeateError("feed_entities_not_supported")
-    try:
-        root = ET.fromstring(raw)
-    except ET.ParseError as exc:
-        raise TeateError("invalid_official_feed") from exc
+    import feedparser
+    parsed = feedparser.parse(raw)
+    if parsed.bozo and not parsed.entries:
+        raise TeateError("invalid_official_feed")
     items = []
-    for entry in root.iter():
-        if entry.tag.rsplit("}", 1)[-1] not in {"item", "entry"}:
-            continue
-        values = {}
-        for field in entry:
-            key = field.tag.rsplit("}", 1)[-1]
-            if key == "link":
-                if field.attrib.get("rel", "alternate") == "alternate":
-                    values[key] = field.attrib.get("href") or field.text or ""
-            elif key in {"title", "description", "summary", "updated", "published", "pubDate", "date"}:
-                values[key] = "".join(field.itertext())
+    for entry in parsed.entries[:100]:
+        values = dict(entry)
+        values["description"] = entry.get("summary", "")
+        values["pubDate"] = entry.get("published", "")
         link = values.get("link", "").strip()
         if urllib.parse.urlsplit(link).scheme != "https":
             continue

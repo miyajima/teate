@@ -1,0 +1,8 @@
+{
+  "name": "teate-optional-codex",
+  "private": true,
+  "version": "0.5.0",
+  "dependencies": {
+    "@openai/codex": "0.159.2"
+  }
+}

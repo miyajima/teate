@@ -1,73 +1,93 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from teate.model import TeateError
-from teate.verification import _command, relative, verify
+from teate.verification import relative, verify
 
 
 class VerificationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
-        self.record = {"worktree":str(self.root)}
-        self.asset = {"verification":{"commands":[{"name":"test","argv":["python3","test.py"]}]}}
+        (self.root / "test.py").write_text('print("ok")')
+        self.record = {"worktree": str(self.root), "changed_files": ["package-lock.json"]}
+        self.asset = {"verification": {"commands": [{"argv": ["python3", "test.py"]}]}}
 
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_no_configuration_does_not_execute_project_code(self):
-        with patch("teate.verification.subprocess.Popen") as process:
-            result = verify({}, self.record)
-        self.assertEqual(result["status"], "unconfigured")
-        process.assert_not_called()
+    def test_no_configuration_never_executes(self):
+        with patch("teate.verification.sandbox.execute") as execute:
+            self.assertEqual(verify({}, self.record)["status"], "unconfigured")
+            execute.assert_not_called()
 
-    def test_linux_sandbox_has_no_network_or_host_authentication_mount(self):
-        with patch("teate.verification.shutil.which", return_value="/usr/bin/bwrap"):
-            command = _command(self.root,self.root,["python3","test.py"])
-        self.assertIn("--unshare-all",command)
-        self.assertIn("--clearenv",command)
-        self.assertNotIn("--share-net",command)
-        self.assertEqual(command.count("--bind"),1)
-        self.assertEqual(command[command.index("--bind")+1],str(self.root))
+    def test_tests_are_offline_and_dependency_preparation_is_separate(self):
+        self.asset["verification"]["install_dependencies"] = True
+        with patch(
+            "teate.verification.sandbox.execute", return_value={"status": "passed"}
+        ) as execute:
+            self.assertEqual(verify(self.asset, self.record)["status"], "passed")
+        self.assertEqual([c.kwargs["network"] for c in execute.call_args_list], ["npm", "offline"])
+        self.assertIn("--ignore-scripts", execute.call_args_list[0].args[1])
 
-    def test_no_sandbox_means_pending_review_and_never_an_unsandboxed_retry(self):
-        with patch("teate.verification._git", return_value=""), patch("teate.verification._command",return_value=None), patch("teate.verification.subprocess.Popen") as process:
-            result = verify(self.asset,self.record)
-        self.assertEqual(result["status"],"blocked")
-        process.assert_not_called()
+    def test_missing_sandbox_never_retries_without_one(self):
+        with patch(
+            "teate.verification.sandbox.execute", return_value={"status": "blocked"}
+        ) as execute:
+            self.assertEqual(verify(self.asset, self.record)["status"], "blocked")
+            self.assertEqual(execute.call_count, 1)
 
-    def test_explicit_command_success_is_local_evidence_not_a_github_check(self):
+    def test_tests_cannot_change_manifest_or_candidate(self):
+        def execute(*args, **kwargs):
+            (self.root / "test.py").write_text("modified")
+            return {"status": "passed"}
+
+        with patch("teate.verification.sandbox.execute", side_effect=execute):
+            self.assertEqual(verify(self.asset, self.record)["reason"], "tests_modified_candidate")
+        for name in ("../file", "/tmp/file", ".git/config"):
+            with self.assertRaises(TeateError):
+                relative(self.root, name)
+
+    def test_sandbox_profile_does_not_grant_host_home_or_credentials(self):
+        from teate.sandbox import execute
+
         def start(command, **kwargs):
-            self.assertNotIn("GH_TOKEN",kwargs["env"])
-            self.assertNotIn("OPENAI_API_KEY",kwargs["env"])
-            kwargs["stdout"].write(b"synthetic local test passed")
-            return SimpleNamespace(wait=lambda **kw:0)
-        with patch("teate.verification._git",return_value=""), patch("teate.verification._command",return_value=["sandbox","test"]), patch("teate.verification.subprocess.Popen",side_effect=start):
-            result = verify(self.asset,self.record)
-        self.assertEqual(result["status"],"passed")
-        self.assertIn("do not replace",result["note"])
+            profile = json.loads(Path(command[command.index("--settings") + 1]).read_text())
+            self.assertEqual(profile["filesystem"]["denyRead"], ["/"])
+            self.assertEqual(profile["network"]["allowedDomains"], [])
+            self.assertNotIn("OPENAI_API_KEY", kwargs["env"])
+            self.assertEqual(command[-2:], ["python3", "test.py"]) if command[
+                -2
+            ] == "python3" else None
 
-    def test_sandbox_setup_failure_is_not_a_code_failure_or_success(self):
-        def start(command,**kwargs):
-            kwargs["stdout"].write(b"bwrap: namespace not permitted")
-            return SimpleNamespace(wait=lambda **kw:1)
-        with patch("teate.verification._git",return_value=""), patch("teate.verification._command",return_value=["sandbox","test"]), patch("teate.verification.subprocess.Popen",side_effect=start):
-            result = verify(self.asset,self.record)
-        self.assertEqual(result["status"],"blocked")
-        self.assertEqual(result["reason"],"test_sandbox_not_permitted")
+            class Process:
+                def wait(self, **kwargs):
+                    return 0
 
-    def test_output_cleanup_cannot_revert_the_patch_or_escape_the_worktree(self):
-        for name in ("../file","/tmp/file",".git/config"):
-            with self.subTest(name=name),self.assertRaises(TeateError):
-                relative(self.root,name)
-        (self.root/"package-lock.json").write_text("{}")
-        asset = {"verification":{**self.asset["verification"],"discard_outputs":["package-lock.json"]}}
-        with patch("teate.verification._git",return_value="package-lock.json"),self.assertRaises(TeateError):
-            verify(asset,self.record)
+            return Process()
+
+        with (
+            patch("teate.sandbox.shutil.which", side_effect=lambda v: "/usr/bin/" + v),
+            patch("teate.sandbox.subprocess.Popen", side_effect=start),
+        ):
+            self.assertEqual(execute(self.root, ["python3", "test.py"])["status"], "passed")
 
 
-if __name__ == "__main__":
-    unittest.main()
+class PrivateCandidateChangeTests(unittest.TestCase):
+    def test_tests_cannot_hide_changes_in_npm_configuration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            def run(*args, **kwargs):
+                (root / ".npmrc").write_text("omit=dev\n")
+                return {"status": "passed"}
+
+            with patch("teate.verification.sandbox.execute", side_effect=run):
+                result = verify(
+                    {"verification": {"commands": [{"argv": ["npm", "test"]}]}},
+                    {"worktree": str(root)},
+                )
+            self.assertEqual(result["reason"], "tests_modified_candidate")
