@@ -52,6 +52,8 @@ class InstallerTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as tmp,
             patch.object(installer, "ROOT", Path(tmp)),
+            patch.object(installer.platform, "system", return_value="Linux"),
+            patch.object(installer.platform, "machine", return_value="x86_64"),
             patch.object(installer, "bootstrap") as bootstrap,
             redirect_stdout(io.StringIO()),
         ):

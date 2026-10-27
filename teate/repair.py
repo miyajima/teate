@@ -319,6 +319,7 @@ def prepare(
             worktree = directory / "worktree"
             before = sources.copy(root, worktree)
             backend_results = []
+            record["backend"] = backend_results
             for location in sorted({f["location"] for f in selected}):
                 _, old = _lock(root, location)
                 local = [f for f in selected if f["location"] == location]

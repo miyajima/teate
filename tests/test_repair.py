@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -13,6 +14,11 @@ from teate.store import Ledger
 
 class RepairTests(unittest.TestCase):
     def setUp(self):
+        git_env = patch.dict(
+            os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        )
+        git_env.start()
+        self.addCleanup(git_env.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name).resolve()
         self.repo = self.root / "repo"
@@ -97,6 +103,7 @@ class RepairTests(unittest.TestCase):
     def tearDown(self):
         self.ledger.close()
         self.temp.cleanup()
+        self.doCleanups()
 
     def git(self, *args):
         return subprocess.run(

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from teate.collect import scan_source
 from teate.execution import execute
@@ -20,6 +21,13 @@ from teate.store import Ledger
     os.environ.get("TEATE_SANDBOX_INTEGRATION") == "1", "opt-in disposable npm end-to-end"
 )
 class NpmEndToEndTests(unittest.TestCase):
+    def setUp(self):
+        git_env = patch.dict(
+            os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+        )
+        git_env.start()
+        self.addCleanup(git_env.stop)
+
     def test_plain_and_git_source_repair_deploy_and_runtime_verify(self):
         for with_git in (False, True):
             with self.subTest(git=with_git), tempfile.TemporaryDirectory() as temporary:
