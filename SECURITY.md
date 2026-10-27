@@ -6,8 +6,10 @@ safe; unsupported, failed and stale checks remain unknown.
 
 ## Reporting vulnerabilities in Teate
 
-Use [GitHub private vulnerability reporting](https://github.com/miyajima/teate/security/advisories/new)
-for vulnerabilities in Teate itself. Include the version or commit, a minimal
+When enabled, use [GitHub private vulnerability reporting](https://github.com/miyajima/teate/security/advisories/new)
+for vulnerabilities in Teate itself. If the reporting form is unavailable, open
+an issue requesting a private contact channel without including technical
+details, affected systems or operational data. Include the version or commit, a minimal
 reproduction using synthetic data, impact and suggested remediation if available.
 Do not include credentials, live infrastructure names, customer data or private
 scan receipts. Do not open a public issue with exploit details or sensitive data.

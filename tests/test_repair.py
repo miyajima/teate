@@ -15,6 +15,12 @@ class RepairTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self.git_environment = patch.dict("os.environ", {
+            "GIT_CONFIG_GLOBAL": str(self.root / "empty-gitconfig"),
+            "GIT_CONFIG_NOSYSTEM": "1",
+        })
+        self.git_environment.start()
+        self.addCleanup(self.git_environment.stop)
         self.repo = self.root / "source"
         self.repo.mkdir()
         self.old = {
@@ -123,6 +129,13 @@ class RepairTests(unittest.TestCase):
     def test_dirty_checkout_is_not_touched(self):
         (self.repo/"package-lock.json").write_text("changed")
         self.assertIn("local changes", self.execute()["results"][0]["reason"])
+
+    def test_configured_checkout_filters_still_require_review(self):
+        self.git("config", "filter.example.smudge", "must-not-execute")
+        record = self.execute()["results"][0]
+        self.assertEqual(record["status"], "review")
+        self.assertIn("checkout filters", record["reason"])
+        self.assertEqual(self.ledger.findings()[0]["status"], "affected")
 
     def test_unverified_host_is_not_scanned(self):
         self.ledger.register([{**self.asset, "host_id": "unverified-other-host"}])
