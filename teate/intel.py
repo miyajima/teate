@@ -72,7 +72,7 @@ def parse_feed(raw: bytes) -> list[dict]:
         raise TeateError("feed_entities_not_supported")
     import feedparser
     parsed = feedparser.parse(raw)
-    if parsed.bozo and not parsed.entries:
+    if parsed.bozo:
         raise TeateError("invalid_official_feed")
     items = []
     for entry in parsed.entries[:100]:

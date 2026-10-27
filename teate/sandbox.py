@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import os
 import shutil
-import signal
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from .model import TeateError, digest, write_json
+from .process import capture
 
 NETWORK = {
     "offline": [],
@@ -160,32 +159,10 @@ process.exit(result.status === null ? 126 : result.status);
             executable,
             *argv[1:],
         ]
-        with tempfile.TemporaryFile() as output:
-
-            def limits():
-                import resource
-
-                resource.setrlimit(resource.RLIMIT_FSIZE, (1_048_576, 1_048_576))
-
-            process = subprocess.Popen(
-                command,
-                cwd=cwd,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                preexec_fn=limits,
-            )
-            timed_out = False
-            try:
-                code = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait()
-                code, timed_out = -1, True
-            output.seek(0)
-            raw = output.read(1_048_577)
+        result = capture(
+            command, cwd=cwd, env=env, timeout=timeout, limit=1_048_576, merge_stderr=True
+        )
+        raw, code, timed_out = result["raw"], result["exit_code"], result["timed_out"]
         excerpt = raw[-2000:].decode(errors="replace").replace(str(root), "<candidate>")
         blocked = code != 0 and any(
             s in excerpt.lower()
@@ -195,6 +172,7 @@ process.exit(result.status === null ? 126 : result.status);
             "status": "passed" if code == 0 else "blocked" if blocked else "failed",
             "exit_code": code,
             "timed_out": timed_out,
+            "output_limited": result["output_limited"],
             "excerpt": excerpt,
             "output_id": digest(raw.decode(errors="replace")),
             "reason": "sandbox_not_permitted" if blocked else None,

@@ -32,3 +32,9 @@ GPL/LGPL licenses. They are not vendored or linked into Teate. npm's Artistic-2.
 and Google Cloud CLI's distribution terms are explicit external-tool exceptions;
 do not describe either as MIT/Apache. Their use is optional according to the
 selected integration. Commercial distribution must retain applicable notices.
+
+The sandbox tool lock explicitly overrides Zod to **4.6.6** for
+[CVE-2023-54404 / GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
+sandbox-runtime 0.0.81 imports the compatible `zod/v3` entrypoint. The actual
+sandbox/configuration integration tests cover this combination. Keep the override
+until upstream ships an appropriate dependency update.

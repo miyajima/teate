@@ -154,36 +154,11 @@ def hook(spec, run, *, release_id=""):
     }
     # Operator hooks are trusted control-plane programs, not project tests. Their
     # output contract contains identities/status only; raw logs never enter history.
-    import tempfile
+    from .process import capture
 
-    with tempfile.TemporaryFile() as output:
-
-        def limits():
-            import resource
-
-            resource.setrlimit(resource.RLIMIT_FSIZE, (12000, 12000))
-
-        process = subprocess.Popen(
-            result_argv,
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=output,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-            preexec_fn=limits,
-        )
-        try:
-            code = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
-            import signal
-
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
-            raise TeateError("deployment_hook_outcome_unconfirmed") from exc
-        output.seek(0)
-        raw = output.read(12001)
-    if code or len(raw) > 12000:
+    result = capture(result_argv, cwd=cwd, env=env, timeout=timeout, limit=12000)
+    raw = result["raw"]
+    if result["exit_code"] or result["timed_out"] or result["output_limited"]:
         raise TeateError("deployment_hook_outcome_unconfirmed")
     try:
         data = json.loads(raw)
@@ -298,6 +273,22 @@ def _execute(ledger, policy, state, jobs, identifier):
     asset = ledger.asset(run["asset_id"])
 
     def stop(status, reason, **updates):
+        finding_status = {
+            "blocked": "blocked",
+            "review": "blocked",
+            "uncertain": "blocked",
+            "awaiting_ci": "testing",
+            "awaiting_deployment": "awaiting_deployment",
+            "verification_pending": "awaiting_deployment",
+            "rolled_back": "affected",
+        }.get(status)
+        if finding_status:
+            for finding in ledger.findings():
+                if finding["id"] in record["finding_ids"] and finding["effective_status"] not in {
+                    "resolved",
+                    "accepted_risk",
+                }:
+                    ledger.mark(finding["id"], finding_status, identifier + ": " + reason)
         return compact(
             jobs.update(
                 identifier,

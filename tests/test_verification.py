@@ -63,15 +63,11 @@ class VerificationTests(unittest.TestCase):
                 -2
             ] == "python3" else None
 
-            class Process:
-                def wait(self, **kwargs):
-                    return 0
-
-            return Process()
+            return {"raw": b"", "exit_code": 0, "timed_out": False, "output_limited": False}
 
         with (
             patch("teate.sandbox.shutil.which", side_effect=lambda v: "/usr/bin/" + v),
-            patch("teate.sandbox.subprocess.Popen", side_effect=start),
+            patch("teate.sandbox.capture", side_effect=start),
         ):
             self.assertEqual(execute(self.root, ["python3", "test.py"])["status"], "passed")
 
