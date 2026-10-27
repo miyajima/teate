@@ -109,6 +109,8 @@ python3 -m teate agent resume --run RUN_ID
 
 SQLiteのrun/stepは操作直前のintentと結果を保存し、同じ資産の同時実行を防ぎます。
 同じrunを再開すれば、終了したデプロイ/マージ/rollbackを繰り返しません。
+候補作成そのものが未完了のrunは、resumeしても候補を再作成しません。
+表示された前提を解決してから次のagent cycleで新しい候補を作成してください。
 ソース・候補・設定が変わった場合は候補を再評価し、未確認の変更操作は自動再送しません。
 コード生成例外のreview patchは自動適用に取り込みません。
 

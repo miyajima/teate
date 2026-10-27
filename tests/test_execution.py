@@ -149,6 +149,26 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(self.execute()["status"], "blocked")
         self.assertEqual(self.calls, [])
 
+    def test_incomplete_candidate_directs_to_cycle_without_retrying_operations(self):
+        self.configure()
+        self.jobs.update(
+            self.run["id"],
+            "ready",
+            record={**self.record, "status": "review", "reason": "sandbox_not_permitted"},
+        )
+        with patch("teate.execution.repair.prepare") as prepare:
+            for _ in range(2):
+                result = self.execute()
+                self.assertEqual(result["status"], "blocked")
+                self.assertEqual(result["reason"], "sandbox_not_permitted")
+                self.assertIn("次のagent cycle", result["next_action"])
+                self.assertEqual(
+                    self.jobs.get(self.run["id"])["next_action"], result["next_action"]
+                )
+            prepare.assert_not_called()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.jobs.get(self.run["id"])["steps"], [])
+
     def test_failed_tests_prevent_all_external_writes(self):
         self.configure()
         with (

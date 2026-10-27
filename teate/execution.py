@@ -272,7 +272,7 @@ def _execute(ledger, policy, state, jobs, identifier):
     record = run["record"]
     asset = ledger.asset(run["asset_id"])
 
-    def stop(status, reason, **updates):
+    def stop(status, reason, *, next_action=None, **updates):
         finding_status = {
             "blocked": "blocked",
             "review": "blocked",
@@ -294,7 +294,7 @@ def _execute(ledger, policy, state, jobs, identifier):
                 identifier,
                 status,
                 reason=reason,
-                next_action=NEXT.get(status, NEXT["blocked"]),
+                next_action=next_action or NEXT.get(status, NEXT["blocked"]),
                 **updates,
             )
         )
@@ -308,7 +308,15 @@ def _execute(ledger, policy, state, jobs, identifier):
 
     try:
         if record.get("status") != "candidate_ready":
-            return stop("blocked", record.get("reason", "candidate_preparation_pending"))
+            return stop(
+                "blocked",
+                record.get("reason", "candidate_preparation_pending"),
+                next_action=(
+                    "候補作成が未完了です。理由に示した前提を解決し、"
+                    "次のagent cycleで候補を再作成してください。"
+                    "同じrunのresumeでは候補を再作成しません"
+                ),
+            )
         settings = authorize(asset, policy, record)
         candidate = Path(record["worktree"])
         if candidate.is_symlink() or not candidate.resolve().is_relative_to(
