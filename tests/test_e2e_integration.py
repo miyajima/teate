@@ -103,7 +103,7 @@ assert.deepEqual(JSON.parse(map.toString()).sources, ['in.js']);
                     check=True,
                     capture_output=True,
                 )
-        script = root / "operator.py"
+        script = root / "teate_fixture_hooks.py"
         script.write_text("""import json,pathlib,shutil,sys
 mode, run_id, candidate_id, candidate, app, runtime, state = sys.argv[1:]
 state=pathlib.Path(state)
