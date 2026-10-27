@@ -93,6 +93,7 @@ def extract(archive: Path, destination: Path) -> None:
                 name = PurePosixPath(member.filename)
                 mode = member.external_attr >> 16
                 if (name.is_absolute() or ".." in name.parts or "\\" in member.filename
+                        or ":" in member.filename or member.orig_filename != member.filename
                         or name in seen or mode & 0o170000 == 0o120000):
                     raise ValueError("Unsafe ZIP member")
                 seen.add(name)
@@ -114,7 +115,7 @@ def extract(archive: Path, destination: Path) -> None:
         paths, links = {}, set()
         for member in members:
             name = PurePosixPath(member.name)
-            if name.is_absolute() or ".." in name.parts or "\\" in member.name:
+            if name.is_absolute() or ".." in name.parts or "\\" in member.name or ":" in member.name:
                 raise ValueError("Unsafe archive path")
             if str(name) == ".":
                 if not member.isdir():
@@ -235,7 +236,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not (3, 11) <= sys.version_info[:2] < (3, 16):
         raise ValueError("Python 3.11–3.15 is required")
-    if not shutil.which("git"):
+    git = shutil.which("git")
+    if not git:
         raise ValueError("Git is missing; run bash scripts/install.sh first")
     os.umask(0o077)
     state = ROOT / ".teate"
@@ -245,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     # Do not change shell profiles or copy authentication. The user activates
     # this environment explicitly for Teate; system/application runtimes stay put.
     link(Path(sys.executable).resolve(), bins / "python3")
+    link(Path(git).resolve(), bins / "git")
     os.environ["PATH"] = str(bins) + os.pathsep + os.environ.get("PATH", os.defpath)
     os.environ["CLOUDSDK_PYTHON"] = sys.executable
     os.environ["CLOUDSDK_CORE_DISABLE_PROMPTS"] = "1"

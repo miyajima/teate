@@ -81,10 +81,14 @@ class InstallerTests(unittest.TestCase):
     def test_safe_zip_and_rejected_zip_paths(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            for index, name in enumerate(["bin/tool", "../escape", "/absolute", "bin\\escape"]):
+            for index, name in enumerate(["bin/tool", "../escape", "/absolute", "bin\\escape", "C:/escape"]):
                 archive = root / f"{index}.zip"
                 with zipfile.ZipFile(archive, "w") as bundle:
-                    bundle.writestr(name, b"tool")
+                    # ZipInfo's constructor normalizes separators on Windows.
+                    # Preserve raw hostile archive names on every test host.
+                    info = zipfile.ZipInfo("entry")
+                    info.filename = name
+                    bundle.writestr(info, b"tool")
                 output = root / str(index)
                 if index == 0:
                     installer.extract(archive, output)

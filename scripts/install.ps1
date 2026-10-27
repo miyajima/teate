@@ -49,7 +49,7 @@ src=$1
 dst="$HOME/teate"
 if [ ! -e "$dst" ]; then
   mkdir "$dst"
-  for name in teate scripts docs README.md AGENTS.md LICENSE SECURITY.md CONTRIBUTING.md; do
+  for name in teate scripts tests docs .gitignore README.md AGENTS.md LICENSE SECURITY.md CONTRIBUTING.md; do
     if [ -e "$src/$name" ]; then cp -R "$src/$name" "$dst/"; fi
   done
   mkdir "$dst/config"
