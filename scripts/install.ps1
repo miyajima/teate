@@ -56,6 +56,10 @@ if [ ! -e "$dst" ]; then
   for name in example.json ci.example.json policy.json; do
     if [ -f "$src/config/$name" ]; then cp "$src/config/$name" "$dst/config/"; fi
   done
+  if [ -d "$src/.agents/skills/teate" ]; then
+    mkdir -p "$dst/.agents/skills"
+    cp -R "$src/.agents/skills/teate" "$dst/.agents/skills/teate"
+  fi
 fi
 if [ ! -f "$dst/scripts/install.sh" ]; then
   echo '~/teate already exists but is not a Teate installation; move it or use an existing Teate checkout.' >&2

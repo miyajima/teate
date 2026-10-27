@@ -171,6 +171,34 @@ python3 -m teate agent render
 
 VPSで毎日動かす場合はcronやsystemd timerで同じユーザー・作業フォルダー・Python・PATHを指定します。検査結果は`.teate/`、対象設定は`config/local.json`に残るので、両方を非公開でバックアップしてください。
 
+## Codexから「Teateで調べて」と頼むためのスキル
+
+Teate用の[スキル](.agents/skills/teate/SKILL.md)を同梱しています。TeateのフォルダーでCodexを使う場合は、そのまま検出できます。スキル自体にLLMやツールは含まれず、上で導入したTeateを固定手順で操作するためのものです。
+
+**ほかのフォルダーからも使いたい場合**は、Teateのフォルダーで次を1回実行します。ユーザー共通の`~/.agents/skills/teate`へ、スキルの公開ファイルだけをコピーします。
+
+```bash
+python3 scripts/install_skill.py --user
+```
+
+プロジェクトを限定するなら、代わりに次を使います。指定したフォルダーは実在するものに置き換えてください。
+
+```bash
+python3 scripts/install_skill.py --project /path/to/your-project
+```
+
+WindowsではWSLのUbuntu内で実行します。既存のスキルが同じ内容なら何も変更せず、内容が異なる場合は上書きせずに止まります。更新時は既存の内容を確認して別の場所へ移動してから再実行してください。
+
+Codexで次のように依頼できます。Teateの配置先も伝えると、別の台帳を使ってしまうことを防げます。
+
+```text
+$teate Teateは /path/to/teate にあります。登録済みの脆弱性を検査して、今日やることを日本語で教えて。
+$teate 保存済みの対応状況だけ見せて。再検査はしないで。
+$teate 対応可能な修正候補を作り、テスト結果と残っている確認事項を教えて。
+```
+
+スキルは通常の検査・定型報告に追加のモデルを呼びません。詳しい導入・一次情報調査の説明は必要なときだけ読み込みます。検出されない場合はCodexを開き直してください。[Codexのスキル仕様](https://developers.openai.com/codex/skills/)
+
 ## 修正・LLM・クラウド連携は必要になってから
 
 - **修正候補の作成**: `agent cycle --scanner osv --prepare`。現在はGit管理された変更のないアプリの、限定的なnpm依存patch更新が対象です。Gitなしの自動修正は未対応です。

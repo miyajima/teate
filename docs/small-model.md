@@ -1,5 +1,7 @@
 # 小型モデルで扱うTeate
 
+Codexから使う場合は[Teateスキル](../.agents/skills/teate/SKILL.md)を利用できます。配置先の確認から以下の固定CLIへつなぎ、通常処理で追加モデルを呼びません。[導入方法](../README.md#codexからteateで調べてと頼むためのスキル)も参照してください。
+
 ## v0.4: 通常処理をTeateへ集約する
 
 ```bash

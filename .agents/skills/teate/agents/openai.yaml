@@ -1,0 +1,6 @@
+interface:
+  display_name: "Teate"
+  short_description: "脆弱性の検査・対応状況・修正候補をTeateのCLIで確認"
+  default_prompt: "Use $teate to check the configured vulnerability ledger and report the next actions in Japanese."
+policy:
+  allow_implicit_invocation: true
