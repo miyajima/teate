@@ -185,7 +185,18 @@ print(json.dumps(result))
             record = result["results"][0]
             self.assertEqual(record["status"], "candidate_ready", record)
             run = Jobs(with_ledger).create("app", record)
-            outcome = execute(with_ledger, policy, root / "state", run["id"])
+            # These hooks contain only synthetic fixture data. Capture diagnostics
+            # on CI without changing production hook logging or retry behavior.
+            from teate.process import capture as original_capture
+
+            def fixture_capture(argv, **kwargs):
+                result = original_capture(argv, **kwargs, merge_stderr=True)
+                if result["exit_code"]:
+                    print("Fixture hook diagnostic:", result["raw"].decode(errors="replace"))
+                return result
+
+            with patch("teate.process.capture", side_effect=fixture_capture):
+                outcome = execute(with_ledger, policy, root / "state", run["id"])
             self.assertEqual(outcome["status"], "verified", outcome)
             self.assertEqual(
                 execute(with_ledger, policy, root / "state", run["id"])["status"], "verified"
