@@ -87,3 +87,18 @@ class PrivateCandidateChangeTests(unittest.TestCase):
                     {"worktree": str(root)},
                 )
             self.assertEqual(result["reason"], "tests_modified_candidate")
+
+
+class RuntimeReadBoundaryTests(unittest.TestCase):
+    def test_an_absolute_host_project_command_does_not_grant_its_directory(self):
+        from teate.sandbox import runtime_root
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            candidate = root / "candidate"
+            host = root / "host-project"
+            candidate.mkdir()
+            host.mkdir()
+            with self.assertRaises(TeateError):
+                runtime_root(host / "executable", candidate)
+            self.assertEqual(runtime_root(candidate / "executable", candidate), candidate)

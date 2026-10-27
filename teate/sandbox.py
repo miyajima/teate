@@ -53,6 +53,27 @@ PROXY_ENV = (
 )
 
 
+def runtime_root(path: Path, candidate: Path) -> Path:
+    """Do not let an absolute project command grant read access to its host tree."""
+    if path.is_relative_to(candidate):
+        return candidate
+    for system in [*SYSTEM_READ, sys.base_prefix]:
+        prefix = Path(system).resolve()
+        if path.is_relative_to(prefix):
+            return prefix
+    for parent in path.parents:
+        if parent.name != ".teate":
+            continue
+        parts = path.relative_to(parent).parts
+        if len(parts) >= 5 and parts[:2] == ("mise", "installs"):
+            return parent.joinpath(*parts[:4])
+        if len(parts) >= 4 and parts[0] == "npm-tools" and parts[2] == "node_modules":
+            return parent.joinpath(*parts[:3])
+        if len(parts) >= 3 and parts[0] == "python":
+            return parent / "python"
+    raise TeateError("test_executable_outside_trusted_runtime")
+
+
 def execute(
     root: Path,
     argv: list[str],
@@ -98,12 +119,7 @@ def execute(
         for name in (srt, executable, shutil.which("node")):
             if name:
                 resolved = Path(name).resolve()
-                parent = (
-                    resolved.parent.parent if resolved.parent.name == "bin" else resolved.parent
-                )
-                for ancestor in resolved.parents:
-                    if ancestor.name == "node_modules":
-                        parent = ancestor
+                parent = runtime_root(resolved, root)
                 read.append(str(parent))
                 paths.append(str(resolved.parent))
         env = {k: os.environ[k] for k in PROXY_ENV if k in os.environ}

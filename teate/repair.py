@@ -288,14 +288,18 @@ def prepare(
             ):
                 raise TeateError("Asset is not a source on this verified host")
             root = Path(asset["path"]).resolve()
+            if (root / ".git").is_symlink():
+                raise TeateError("Symlink Git metadata requires review")
             if (root / ".git").exists():
-                if _git(root, "status", "--porcelain", "--untracked-files=normal").strip():
-                    raise TeateError("Source checkout has local changes; review required")
+                # Even status may invoke clean filters. Reject them before any
+                # Git status operation, not only before a checkout.
                 filters = run(
                     ["git", "-C", str(root), "config", "--name-only", "--get-regexp", r"^filter\."]
                 )
                 if filters.returncode not in (0, 1) or filters.stdout.strip():
                     raise TeateError("Configured checkout filters require manual preparation")
+                if _git(root, "status", "--porcelain", "--untracked-files=normal").strip():
+                    raise TeateError("Source checkout has local changes; review required")
             original = source_subject(root)
             baseline = scan_source(asset, scanner=scanner)
             directory = job / digest(asset_id)[:16]
