@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "teate-security"
+version = "0.3.0"
+description = "Vulnerability remediation from discovery to verified deployment"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/miyajima/teate"
+Issues = "https://github.com/miyajima/teate/issues"
+
+[project.scripts]
+teate = "teate.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["teate*"]

@@ -1,0 +1,65 @@
+name: Teate assessment
+on:
+  schedule:
+    - cron: '10 22 * * *' # 07:10 Asia/Tokyo; GitHub scheduling may be delayed
+  workflow_dispatch:
+  repository_dispatch:
+    types: [teate-receipts]
+permissions:
+  contents: write
+  issues: write
+concurrency:
+  group: teate-ledger
+  cancel-in-progress: false
+jobs:
+  assess:
+    if: github.event.repository.private == true && vars.TEATE_OPERATIONS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.TEATE_GITHUB_TOKEN || github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/install_scanners.py --directory "$RUNNER_TEMP/teate-bin"
+      - run: echo "$RUNNER_TEMP/teate-bin" >> "$GITHUB_PATH"
+      - name: Restore durable evidence
+        run: python scripts/ci_state.py restore --repository "$GITHUB_REPOSITORY"
+      - name: Fetch registered source repositories
+        continue-on-error: true
+        run: python scripts/checkout_assets.py
+      - name: Read Mac and runtime receipts
+        run: python scripts/ci_state.py receipts --repository "$GITHUB_REPOSITORY"
+      - name: Refresh known-exploited information
+        continue-on-error: true
+        run: python -m teate --config config/ci.json refresh-feeds
+      - name: Assess and report
+        id: scan
+        continue-on-error: true
+        run: python -m teate --config config/ci.json run --sync-issues "$GITHUB_REPOSITORY"
+      - name: Persist ledger and report
+        run: python scripts/ci_state.py save --repository "$GITHUB_REPOSITORY"
+      - name: Prepare compact agent handoff without a model call
+        run: |
+          python -m teate --config config/ci.json agent brief > .teate/agent-context.json
+          python -m teate --config config/ci.json agent render > .teate/agent-report.txt
+      - name: Publish run summary
+        run: cat .teate/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: teate-assessment
+          path: |
+            .teate/report.md
+            .teate/summary.json
+            .teate/receipts/
+            .teate/agent/
+            .teate/agent-context.json
+            .teate/agent-report.txt
+          retention-days: 30
+      - name: Signal incomplete coverage
+        if: steps.scan.outcome == 'failure'
+        run: exit 1

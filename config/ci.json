@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "state_dir": "../.teate",
+  "policy": "policy.json",
+  "assets": []
+}

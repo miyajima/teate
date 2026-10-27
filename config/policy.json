@@ -1,0 +1,21 @@
+{
+  "timezone": "Asia/Tokyo",
+  "max_scan_age_hours": 48,
+  "deadline_hours": {"urgent": 24, "high": 168, "normal": 720},
+  "automation": {
+    "enabled": true,
+    "trusted_bots": ["renovate[bot]", "mend[bot]"],
+    "allowed_base_branches": ["main"],
+    "allowed_packages": [],
+    "required_checks": ["test", "security"],
+    "minimum_release_age_hours": 336,
+    "allow_emergency_fast_track": false
+  },
+  "mac": {
+    "allowed_formulae": [],
+    "automatic_formula_updates": false,
+    "process_names": {},
+    "allow_dependency_updates": false,
+    "maintenance_window": {"timezone": "Asia/Tokyo", "start": "03:00", "end": "05:00"}
+  }
+}

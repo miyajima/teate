@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "state_dir": "../.teate",
+  "policy": "policy.json",
+  "assets": [
+    {
+      "id": "example:mac:source",
+      "project": "example",
+      "environment": "mac-development",
+      "kind": "source",
+      "path": "/Users/you/projects/example",
+      "exposure": "private"
+    },
+    {
+      "id": "example:production",
+      "project": "example",
+      "environment": "production",
+      "kind": "cloud-run",
+      "gcp_project": "your-project-id",
+      "region": "asia-northeast1",
+      "service": "example",
+      "exposure": "public",
+      "expected_scans": [["trivy", "runtime"]]
+    }
+  ]
+}

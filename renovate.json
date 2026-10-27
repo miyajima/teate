@@ -1,0 +1,13 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices"],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "minimumReleaseAge": "14 days",
+  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "vulnerabilityAlerts": {"enabled": true, "minimumReleaseAge": "0 days"},
+  "packageRules": [
+    {"description": "Major and minor upgrades are always reviewed", "matchUpdateTypes": ["major", "minor"], "automerge": false}
+  ]
+}

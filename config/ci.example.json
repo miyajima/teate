@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "state_dir": "../.teate",
+  "policy": "policy.json",
+  "assets": [
+    {
+      "id": "github:OWNER/PROJECT:main",
+      "project": "example",
+      "environment": "github-main",
+      "kind": "source",
+      "repository": "OWNER/PROJECT",
+      "path": "../repositories/example",
+      "exposure": "unknown",
+      "expected_scans": [["osv", "repository"]]
+    }
+  ]
+}
