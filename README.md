@@ -1,60 +1,188 @@
 # Teate — てあて
 
-An open-source CLI for tracking vulnerabilities across Macs, source repositories
-and cloud workloads, preparing narrow dependency patches, and verifying fixes.
-Python 3.11+ and Git are required; the core has no Python runtime dependencies.
-Licensed under [MIT](LICENSE). See [SECURITY.md](SECURITY.md) and
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Mac・VPS・クラウドの脆弱性を調べ、「何が未対応か」「修正を確認できたか」を管理するCLIです。
+**下の手順でインストールから初回検査まで進められます。通常の検査にLLM・GitHubアカウント・APIキーは不要です。**
+
+Teate is an open-source CLI for vulnerability tracking and verified remediation.
+Python 3.11+; no third-party Python packages. [MIT License](LICENSE).
+
+## 1. Teateをダウンロードする
+
+[ZIPをダウンロード](https://github.com/miyajima/teate/archive/refs/heads/main.zip)して展開し、ターミナルで`teate-main`フォルダーを開きます。アプリや台帳はWebへ公開しないため、ホームディレクトリなど、Web公開ディレクトリの外へ置いてください。
+
+コマンドで取得する場合は次のとおりです。すでにTeateを取得済みなら、そのフォルダーで次のステップへ進めます。
+
+**Mac / Linux（curl・tarを使用）**
 
 ```bash
-git clone https://github.com/miyajima/teate.git
-cd teate
-python3 -m teate init --root /path/to/projects --output config/local.json
-python3 -m teate agent cycle --scanner npm-audit --prepare
+curl -fL https://github.com/miyajima/teate/archive/refs/heads/main.tar.gz -o teate.tar.gz
+tar -xzf teate.tar.gz
+cd teate-main
+```
+
+最小構成のUbuntuでcurlがない場合だけ、先に`sudo apt-get update`と`sudo apt-get install -y curl`を実行してください。
+
+**Windows（PowerShell）**
+
+```powershell
+Invoke-WebRequest https://github.com/miyajima/teate/archive/refs/heads/main.zip -OutFile teate.zip
+Expand-Archive teate.zip -DestinationPath .
+cd teate-main
+```
+
+## 2. 必要なツールを一括インストールする
+
+**Mac / Linux**
+
+```bash
+bash scripts/install.sh --all
+source .teate/env.sh
+```
+
+通常ユーザーで実行してください。OSのパッケージ導入やHomebrewの初回設定で、管理者パスワードなどを求められる場合があります。
+
+**Windows（PowerShell）**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -All
+```
+
+Windowsでは**WSL2のUbuntu上でTeateを動かします**。Windowsネイティブ版ではありません。WSL2が未導入ならセットアップを開始します。管理者権限・再起動・Ubuntuのユーザー作成を求められた場合は完了させ、同じコマンドを再実行してください。既存のWSL1環境は事前にWSL2へ変更します。[MicrosoftのWSL手順](https://learn.microsoft.com/windows/wsl/install)
+
+インストール後、Windowsでは次でUbuntuを開きます。**以降の操作はこのUbuntuの中で行います。**
+
+```powershell
+wsl -d Ubuntu-24.04
+```
+
+Ubuntuが開いたら実行します。
+
+```bash
+cd ~/teate
+source .teate/env.sh
+```
+
+Windows用スクリプトは初回に公開ソースをUbuntuの`~/teate`へコピーします。既存の`~/teate`は上書きしません。更新する場合は、そのLinux側のTeateも更新してください。
+
+### 何が入る？
+
+| ツール | 用途 | 通常導入 | `--all` / `-All` |
+|---|---|---|---|
+| Python・Git | Teateの実行、検査対象の識別 | ○ | ○ |
+| OSV-Scanner | 複数言語の依存ライブラリ検査 | ○ | ○ |
+| Node.js・npm | npmの補助検査・修正候補の検証 | — | ○ |
+| Trivy | コンテナイメージ検査 | — | ○ |
+| GitHub CLI (`gh`) | 非公開台帳の共有・GitHub連携 | — | ○ |
+| Google Cloud CLI (`gcloud`) | Cloud Runの実体確認 | — | ○ |
+| Codex CLI | 任意のLLM例外調査 | — | ○ |
+| bubblewrap（Linux） | 修正候補のテストを隔離して実行 | — | ○ |
+
+**検査だけなら`--all`（Windowsは`-All`）を外すと軽量です。** MacはHomebrewがなければ公式インストーラーを実行します。Linuxはapt-get / dnfを利用し、Python 3.11以上が必要です。目安はUbuntu 24.04以降・Debian 12以降・新しいFedora。Mac / Linuxはamd64・arm64が対象です。
+
+Python・Git・LinuxのbubblewrapはOSのパッケージ管理から導入し、その他のツールは主にTeate内の`.teate/`へ入れます。直接取得するバイナリは固定版・SHA256照合、Codexは固定版の公式npmパッケージを使用します。シェル設定は自動で書き換えません。認証情報や検査対象の登録も自動では行いません。
+
+実行前に内容だけ見たい場合は`bash scripts/install.sh --all --dry-run`、Windowsは`powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -All -DryRun`を使います。途中で失敗したら原因を確認して再実行できます。TLS検証や通信制限を緩めることはしません。
+
+## 3. 検査対象を登録する（初回だけ）
+
+例えば、アプリが`/var/www/myapp`にあるVPSでは、**1つ上の`/var/www`**を指定します。
+
+```bash
+umask 077
+python3 -m teate init --root /var/www --output config/local.json
+```
+
+Macで`/Users/you/projects/myapp`を調べる場合は、`/var/www`を`/Users/you/projects`へ置き換えます。指定した親フォルダーの直下から、Gitリポジトリまたは対応する依存ファイルがあるアプリを登録します。`config/local.json`の`assets`に目的のアプリがあることを確認してください。対象がない場合は未登録です。既存の設定は`init`で上書きせず、編集します。
+
+**アプリはGit管理されていなくても検査できます。** Gitコマンドはインストールが必要ですが、GitHubへアプリをアップする必要はありません。
+
+<details>
+<summary>アプリを1つだけ、パスで直接登録する場合</summary>
+
+初回用の`config/local.json`の例です。`path`を実際のアプリの絶対パスへ変更してください。既存の設定がある場合は上書きせず、`assets`へ追加します。
+
+```json
+{
+  "schema_version": 1,
+  "state_dir": "../.teate",
+  "policy": {"max_scan_age_hours": 48, "automation": {"enabled": false}},
+  "assets": [
+    {
+      "id": "source:vps:myapp",
+      "project": "myapp",
+      "environment": "production",
+      "kind": "source",
+      "path": "/var/www/myapp",
+      "exposure": "unknown"
+    }
+  ]
+}
+```
+
+対象ソースを読めるユーザーで実行してください。lockfileなど対応する依存情報がない場合は未確認になります。WindowsからVPSを調べる場合も、WSL内からそのVPSが自動的に見えるわけではありません。VPS上で実行するか、別途検査用コピーを用意します。
+
+</details>
+
+## 4. 検査して、日本語で結果を見る
+
+**Teateのフォルダーで**次の2コマンドを順番に実行します。最初の検査は少し時間がかかります。
+
+```bash
+python3 -m teate agent cycle --scanner osv
 python3 -m teate agent render
 ```
 
-`npm-audit` requires npm and checks npm lockfiles only. Use OSV-Scanner for broader
-coverage. Unsupported, failed or stale checks remain unknown. Operational data
-stays local by default. Store shared ledgers and reports in a **separate private
-repository**; a branch of this public repository is public too. Operational GitHub
-Actions are disabled in public repositories and require explicit opt-in in a
-private operations repository. The public CI runs synthetic unit tests only.
+最初のコマンドが公式情報の更新・検査・台帳更新を行い、2つ目が結果を表示します。通常の検査ではアプリのソース変更・依存インストール・本番への反映は行いません。OSVは依存パッケージ名・版などを外部サービスへ問い合わせます。
 
-Macとクラウドの脆弱性対応を、検出から修正・反映・解消確認までつなぎます。
-
-Teate v0.4はPython 3.11以降のCLIです。Python実行時の外部ライブラリは不要です。SQLiteの台帳、JSONの検査証跡、GitHub Issuesによる対応管理、隔離した修正候補の作成、Renovateによる修正PR、GitHub Actionsの実行フローを備えます。
-
-**中核処理はLLM不要です。** 検出・優先度・対応期限・マージ可否・解消確認はコードが決めます。LLMを呼び出し側に置く場合は、luna/maxを想定した短いJSON窓口を使います。通常処理はLLM呼び出し0回です。`cycle --llm codex`を明示した場合だけ、残った例外をChatGPT認証済みのCodex CLIで最大1件調査できます。APIキーへの切替はありません。モデルの応答がなくても、壊れていても定型レポートを生成できます。
+OSVに接続できず、npmの`package-lock.json`だけを調べる場合は次を使います。Node/npmは一括導入の`--all`に含まれます。
 
 ```bash
-python3 -m teate agent cycle --scanner osv --prepare
+python3 -m teate agent cycle --scanner npm-audit
 python3 -m teate agent render
 ```
 
-`cycle`が情報更新・検査・台帳更新・レポート作成をまとめて実行し、12KB以内のJSONを返します。OSV通信が制限された環境では`--scanner npm-audit`を使い、対象外を未確認として残します。状態の参照だけなら`agent brief`を使います。[小型モデル向けの契約と検証範囲](docs/small-model.md)を参照してください。
+npmレジストリへ依存情報を送ります。**npm以外のRustなどは検査できず、未確認のままです。**
 
-ソースコードは公開して利用・改変できます。個人の台帳・資産一覧・認証・検査結果は含めず、利用者ごとに作成します。`config/ci.json`の管理対象は初期状態で空です。CI設定例は[config/ci.example.json](config/ci.example.json)を使い、実データは非公開の運用リポジトリに置いてください。[導入チェックリスト](docs/handoff.md)も参照してください。
+## 5. 結果を読む
 
-## 動かす
+| 表示 | 意味 |
+|---|---|
+| 登録資産 | 登録したアプリ・環境の数 |
+| 未解消 | まだ修正を確認できていない指摘 |
+| 未確認 | 検査失敗・対象外・古い結果などで、十分に確認できていない資産 |
+| 期限超過 | 対応期限を過ぎた未解消の指摘 |
+| 解消確認 | 新しい検査で解消を確認できた指摘 |
+
+**「未確認」は安全という意味ではありません。** 指摘0件でも未確認が残れば、環境全体の安全性は判定できません。
+
+終了コードは`0`＝処理成功、`1`＝部分検査・未確認・情報更新失敗あり、`2`＝エラーです。`0`でも脆弱性が見つかる場合があります。`1`でも続けて`agent render`で結果を確認してください。2コマンドを`&&`でつながず、個別に実行します。
+
+詳細は`python3 -m teate report`、対応一覧は`python3 -m teate plan`で見られます。これは保存済みの結果の参照で、再検査はしません。画面を自作する場合は`.teate/summary.json`を利用できます。
+
+## 2回目以降はこの3行
+
+Teateのフォルダーで実行します。インストールと`init`は毎回不要です。
 
 ```bash
-python3 -m teate init --root /path/to/projects --output config/local.json
-python3 scripts/install_scanners.py --directory .teate/bin
-export PATH="$PWD/.teate/bin:$PATH"
-python3 -m teate refresh-feeds
-python3 -m teate run
-python3 -m teate report
+source .teate/env.sh
+python3 -m teate agent cycle --scanner osv
+python3 -m teate agent render
 ```
 
-OSV APIに接続できない環境では、npmのlockfileに限り、以下の検査も利用できます。Rust等の対象外manifestは「未検査」として残ります。
+VPSで毎日動かす場合はcronやsystemd timerで同じユーザー・作業フォルダー・Python・PATHを指定します。検査結果は`.teate/`、対象設定は`config/local.json`に残るので、両方を非公開でバックアップしてください。
 
-```bash
-python3 -m teate run --scanner npm-audit
-python3 -m teate plan
-```
+## 修正・LLM・クラウド連携は必要になってから
 
-`run` / `scan` の終了コードは、0=取得した検査が完全に成功、1=未対応・部分検査・取得失敗あり、2=設定・同期等のエラーです。0は「脆弱性がゼロ」を意味しません。指摘件数は`status`または`report`を確認してください。
+- **修正候補の作成**: `agent cycle --scanner osv --prepare`。現在はGit管理された変更のないアプリの、限定的なnpm依存patch更新が対象です。Gitなしの自動修正は未対応です。
+- **テストの実行**: プロジェクトごとのコマンド設定が必要です。sandboxの実行権限も確認します。インストールだけではテスト成功・解消扱いにはしません。
+- **LLM例外調査**: 上記へ`--llm codex`を追加し、事前に公式Codex CLIの`codex login`でChatGPT認証します。通常はLLM呼び出し0回、例外は最大1回。APIキーへの切替はしません。[手順と制限](docs/small-model.md)
+- **GitHub / Cloud Run**: ツールを入れるだけでは接続されません。必要な認証・権限・対象を別途設定します。インストーラーはログイン・権限追加・デプロイを実行しません。[運用手順](docs/operations.md)
+
+**公開するのはTeateのコードだけです。** 実際の設定・台帳・レポートは、Web公開ディレクトリや公開GitHubリポジトリへ置かないでください。共有するなら別の非公開リポジトリを使います。この公開リポジトリの別ブランチも公開です。公開CIは合成データのテストのみで、運用workflowは非公開repoで明示的に有効化する必要があります。[導入チェックリスト](docs/handoff.md)
+
+---
+
+以下は運用を詳しく設定する方向けの説明です。
 
 ## 何を管理するか
 
