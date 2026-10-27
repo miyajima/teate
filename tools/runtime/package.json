@@ -4,5 +4,8 @@
   "version": "0.5.0",
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.81"
+  },
+  "overrides": {
+    "zod": "4.6.6"
   }
 }

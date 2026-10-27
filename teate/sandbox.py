@@ -90,7 +90,7 @@ def execute(
         (home / "global.npmrc").write_text("")
         # Grant only the installed tool distribution, never its enclosing .teate,
         # user home, live project, or ledger. Python/Node runtimes are system paths.
-        read = [p for p in SYSTEM_READ if Path(p).exists()] + [
+        read = [str(Path(p).resolve()) for p in SYSTEM_READ if Path(p).exists()] + [
             str(root),
             str(scratch),
             sys.base_prefix,
@@ -133,8 +133,33 @@ def execute(
         }
         settings = scratch / "settings.json"
         write_json(settings, profile)
-        # srt quotes its argv before the internal shell; never construct shell text.
-        command = [srt, "--settings", str(settings), "--", executable, *argv[1:]]
+        # macOS can deny DNS resolution even for "localhost". Address only SRT's
+        # own authenticated loopback proxy numerically; retain its port, token,
+        # domain filter and the inherited managed upstream proxy unchanged.
+        launcher = scratch / "proxy-launcher.cjs"
+        launcher.write_text("""const {spawnSync} = require('node:child_process');
+for (const key of ['HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','http_proxy','https_proxy','all_proxy']) {
+  if (!process.env[key]) continue;
+  const url = new URL(process.env[key]);
+  if (url.hostname === 'localhost') { url.hostname = '127.0.0.1'; process.env[key] = url.href; }
+}
+const result = spawnSync(process.argv[2], process.argv.slice(3), {stdio:'inherit', env:process.env});
+if (result.error) { console.error(result.error.code); process.exit(126); }
+process.exit(result.status === null ? 126 : result.status);
+""")
+        node = shutil.which("node")
+        if not node:
+            return {"status": "blocked", "reason": "sandbox_runtime_or_tool_unavailable"}
+        command = [
+            srt,
+            "--settings",
+            str(settings),
+            "--",
+            str(Path(node).resolve()),
+            str(launcher),
+            executable,
+            *argv[1:],
+        ]
         with tempfile.TemporaryFile() as output:
 
             def limits():

@@ -30,7 +30,7 @@
   {
     "bundle": "runtime",
     "package": "node_modules/zod",
-    "version": "3.25.76",
+    "version": "4.6.6",
     "declared_license": "MIT",
     "selected_license": "MIT"
   },
