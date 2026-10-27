@@ -85,3 +85,36 @@ class PublicationTests(unittest.TestCase):
             result = gate({"repository": "owner/project", "pr": 1, "head_sha": self.sha}, {})
             self.assertFalse(result["merged"])
             self.assertEqual(result["decision"]["action"], "review")
+
+
+class MergedCommitGateTests(unittest.TestCase):
+    def test_manual_merge_does_not_bypass_commit_specific_checks(self):
+        publication = {"repository": "owner/project", "pr": 1, "head_sha": "b" * 40}
+        pr = {
+            "head": {"sha": "b" * 40},
+            "merged": True,
+            "merge_commit_sha": "c" * 40,
+            "user": {"login": "teate-bot"},
+        }
+        policy = {"automation": {"required_checks": ["test"], "trusted_bots": ["teate-bot"]}}
+
+        def response(sha):
+            return {
+                "total_count": 1,
+                "check_runs": [
+                    {
+                        "name": "test",
+                        "head_sha": sha,
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                    }
+                ],
+            }
+
+        for sha, accepted in [("a" * 40, False), ("b" * 40, True)]:
+            with patch("teate.publication.api", side_effect=[pr, response(sha)]):
+                if accepted:
+                    self.assertTrue(gate(publication, policy)["merged"])
+                else:
+                    with self.assertRaises(TeateError):
+                        gate(publication, policy)

@@ -107,6 +107,27 @@ def gate(publication, policy):
     if pr["head"]["sha"] != publication["head_sha"]:
         raise TeateError("published_head_changed")
     if pr.get("merged"):
+        # Manual/external merging does not waive the configured execution gates.
+        automation = policy.get("automation", {})
+        checks = api(
+            f"repos/{repository}/commits/{publication['head_sha']}/check-runs?per_page=100"
+        )
+        complete = checks.get("total_count", 0) == len(checks.get("check_runs", []))
+        successful = {
+            c["name"]
+            for c in checks.get("check_runs", [])
+            if c.get("head_sha") == publication["head_sha"]
+            and c.get("conclusion") == "success"
+            and c.get("app", {}).get("slug") == "github-actions"
+        }
+        required = automation.get("required_checks", [])
+        if (
+            not complete
+            or not required
+            or not set(required) <= successful
+            or pr.get("user", {}).get("login") not in automation.get("trusted_bots", [])
+        ):
+            raise TeateError("merged_commit_required_checks_or_author_unconfirmed")
         return {"merged": True, "merge_sha": pr["merge_commit_sha"]}
     update, decision = inspect_patch_pr(repository, publication["pr"], policy)
     if update["head_sha"] != publication["head_sha"]:
