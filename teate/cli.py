@@ -124,6 +124,10 @@ def parser() -> argparse.ArgumentParser:
     cycle.add_argument("--scanner", choices=["osv", "npm-audit"], default="osv")
     cycle.add_argument("--publish")
     cycle.add_argument("--sync-issues")
+    cycle.add_argument("--prepare", action="store_true", help="prepare supported candidates in isolation")
+    cycle.add_argument("--llm", choices=["none", "codex"], default="none")
+    cycle.add_argument("--model")
+    cycle.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
     render = agent_actions.add_parser(
         "render", help="validate optional focus selection; otherwise use deterministic report"
     )
@@ -136,9 +140,9 @@ def parser() -> argparse.ArgumentParser:
     return root
 
 
-def receipt_for(ledger: Ledger, asset: dict, scanner: str, feed: dict | None) -> dict:
+def receipt_for(ledger: Ledger, asset: dict, scanner: str, feed: dict | None, catalog: dict | None = None) -> dict:
     try:
-        return _receipt_for(ledger, asset, scanner, feed)
+        return _receipt_for(ledger, asset, scanner, feed, catalog)
     except (TeateError, OSError, ValueError, KeyError, TypeError) as exc:
         failed = snapshot(
             asset["id"],
@@ -158,7 +162,7 @@ def receipt_for(ledger: Ledger, asset: dict, scanner: str, feed: dict | None) ->
         }
 
 
-def _receipt_for(ledger: Ledger, asset: dict, scanner: str, feed: dict | None) -> dict:
+def _receipt_for(ledger: Ledger, asset: dict, scanner: str, feed: dict | None, catalog: dict | None = None) -> dict:
     observation = None
     if asset["kind"] == "source":
         scans = scan_source(asset, scanner=scanner)
@@ -172,6 +176,10 @@ def _receipt_for(ledger: Ledger, asset: dict, scanner: str, feed: dict | None) -
         scans = [scan_cloud_run(asset, observation)]
     if observation:
         ledger.observe(asset["id"], observation)
+    if catalog is not None:
+        from .intel import enrich as enrich_advisories
+
+        enrich_advisories(scans, catalog)
     scans = [enrich(scan, feed) for scan in scans]
     results = [ledger.ingest(scan) for scan in scans]
     return {
@@ -328,11 +336,12 @@ def execute(args) -> int:
                         mac_operations.append(
                             {"status": "deferred", "reason": "outside maintenance window"}
                         )
+                catalog = {} if agent_mode == "cycle" else None
                 for asset in config["assets"]:
                     if asset.get("host_id") and asset["host_id"] != platform.node():
                         skipped.append(asset["id"])
                         continue
-                    receipt = receipt_for(ledger, asset, args.scanner, feed)
+                    receipt = receipt_for(ledger, asset, args.scanner, feed, catalog)
                     target = state / "receipts" / (digest(receipt) + ".json")
                     write_json(target, receipt)
                     receipts.append(receipt)
@@ -345,7 +354,7 @@ def execute(args) -> int:
                             publish_receipt(args.publish, receipt)
                         except TeateError as exc:
                             transport_errors.append(str(exc))
-                if args.sync_issues:
+                if args.sync_issues and agent_mode != "cycle":
                     from .github import sync_issues
 
                     try:
@@ -370,9 +379,39 @@ def execute(args) -> int:
                 )
                 if agent_mode == "cycle":
                     from .agent import brief
+                    from .autopilot import run as autopilot
+                    from .intel import refresh as refresh_intel
+                    from .investigation import dispatch
 
                     if cycle_info["feed_status"] == "error":
                         exit_code = max(exit_code, 1)
+                    intelligence = refresh_intel(state)
+                    workflow = autopilot(ledger, policy, state, prepare=args.prepare, catalog=catalog)
+                    investigation = dispatch(ledger, policy, state, workflow["decisions"],
+                                             enabled=args.llm == "codex", model=args.model, effort=args.effort)
+                    workflow["counts"]["llm_calls"] = investigation["llm_calls"]
+                    workflow["investigation"] = investigation
+                    write_json(state / "autopilot" / "result.json", workflow)
+                    cycle_info["automation"] = {**workflow["counts"], "changed": workflow["changed"],
+                                                "intel_new": intelligence["new"],
+                                                "intel_updated": intelligence["updated"],
+                                                "intel_unconfirmed": intelligence["unconfirmed"]}
+                    if intelligence["unconfirmed"]:
+                        exit_code = max(exit_code, 1)
+                    if args.sync_issues:
+                        from .github import sync_issues
+
+                        try:
+                            sync_issues(ledger, args.sync_issues, apply=True)
+                        except TeateError as exc:
+                            transport_errors.append(str(exc))
+                            exit_code = 2
+                    # Candidate preparation only updates workflow state, never resolution.
+                    data = summary(ledger, policy)
+                    data["transport_errors"] = transport_errors
+                    data["mac_operations"] = mac_operations
+                    write_json(state / "summary.json", data)
+                    (state / "report.md").write_text(markdown(data))
                     cycle_info["exit_code"] = exit_code
                     packet = brief(ledger, policy, cycle=cycle_info)
                     write_json(state / "agent" / "brief.json", packet)

@@ -246,6 +246,18 @@ def render(
         )
     if current.get("cycle", {}).get("feed_status") == "error":
         lines.append("CVE/KEV情報の更新に失敗しました。新しい情報の取得は未確認です。")
+    automation = current.get("cycle", {}).get("automation")
+    if automation:
+        lines.append(
+            f"定型処理: 修正候補 {automation['candidate_findings']}件 / "
+            f"再利用 {automation['reused_groups']}組 / テスト成功 {automation['tests_passed']}資産 / "
+            f"テスト未完了 {automation['tests_pending']}資産 / "
+            f"LLM調査候補 {automation['llm_needed']}組 / Codex呼出試行 {automation['llm_calls']}回"
+        )
+        lines.append(
+            f"公式フィード差分: 新規 {automation['intel_new']}件 / 更新 {automation['intel_updated']}件 / "
+            f"取得未確認 {automation['intel_unconfirmed']}ソース"
+        )
     lines.append(
         "レビューが必要な項目があります。"
         if facts["requires_review"]

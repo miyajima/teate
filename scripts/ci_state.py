@@ -12,6 +12,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from teate.cli import ingest_file
 from teate.config import load_config
+from teate.control_state import export as export_control_state
+from teate.control_state import restore as restore_control_state
 from teate.github import api, repository_name, require_private_repository
 from teate.model import TeateError
 from teate.store import Ledger
@@ -41,6 +43,11 @@ def main():
             with sqlite3.connect(target) as db:
                 if db.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                     raise TeateError("Remote ledger integrity check failed")
+            controls = api(f"repos/{name}/contents/control-state.json.gz?ref=teate-state", allow_missing=True)
+            if controls:
+                if controls.get("encoding") != "base64":
+                    raise TeateError("Control-state transfer is incomplete")
+                restore_control_state(state, base64.b64decode(controls["content"]))
         return
     if args.action == "receipts":
         branch = api(f"repos/{name}/git/ref/heads/teate-receipts", allow_missing=True)
@@ -76,11 +83,12 @@ def main():
     ref = api(f"repos/{name}/git/ref/heads/teate-state", allow_missing=True)
     parent = ref["object"]["sha"] if ref else None
     entries = []
-    for filename in ("ledger.sqlite3", "summary.json", "report.md"):
+    control = export_control_state(state)
+    for filename in ("ledger.sqlite3", "summary.json", "report.md", "control-state.json.gz"):
         file = state / filename
-        if not file.exists():
+        if filename != "control-state.json.gz" and not file.exists():
             raise TeateError(f"Missing state output: {filename}")
-        content = (
+        content = control if filename == "control-state.json.gz" else (
             gzip.compress(file.read_bytes(), mtime=0)
             if filename.endswith("sqlite3")
             else file.read_bytes()

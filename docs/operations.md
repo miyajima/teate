@@ -1,5 +1,31 @@
 # 運用・接続手順
 
+## v0.4の日次処理とテスト
+
+`agent cycle --scanner npm-audit --prepare`で、検査・公式フィード差分・修正版候補の調査・対応済みの候補作成・設定済みのテスト・再検査まで実行します。通常はモデル呼び出し0回です。KEVに加えてJPCERT/CC・JVN・Node.js公式RSS/Atomを取得し、最終成功時点から48時間重複、初回7日を中心に変更を記録します。取得不能は未確認で、成功日時を進めません。RSSの掲載自体から、管理対象の利用・影響・悪用・修正済みを判断しません。
+
+修正版はscannerの構造化フィールドか、対象packageに一致するGitHub公式Advisory APIから取得し、公式npmレジストリで版・配布元・SHA512・公開時刻を検証します。新しい版はあくまで候補で、対象の指摘が実際に消えるかを再検査します。台帳の`fixed_versions`を推測で書き換えません。
+
+各source資産の非公開設定に、操作者が`verification`を明示できます。
+
+```json
+{
+  "verification": {
+    "commands": [
+      {"name": "unit", "argv": ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"], "cwd": ".", "timeout_seconds": 60}
+    ],
+    "discard_outputs": [],
+    "context_files": ["src/example.py"]
+  }
+}
+```
+
+これは資産定義へ追加する部分設定の例です。対象に実在するテストへ置き換えてください。コマンドは最大5件、各1〜120秒、shell展開なしで実行します。Linuxではbubblewrap、macOSでは利用可能なsandbox-execを使い、ネットワークとホスト認証情報へのアクセスを制限します。sandboxの不足・利用拒否時は実行を止め、非sandbox実行へ切り替えません。依存インストールやネットワークを伴うテストは自動では行いません。候補に必要なツール・依存を用意する方法は操作者の検討事項です。
+
+`discard_outputs`はテストが生成する既存のtrackedファイルを候補作成直後の内容へ戻すための明示リストです。依存manifestやlockfile、管理外パスには使えません。許可外の差分が残れば検証失敗です。`context_files`は例外調査に渡してよいコードだけを最大2ファイル選び、秘密情報や認証を含めません。ローカルテストが通っても、対象commitの必須GitHub CI・信頼bot・許可リスト・待機期間は代替しません。
+
+非公開GitHubのassessment workflowは新しいcycleを使います。`TEATE_PREPARE_CANDIDATES=true`を明示すると候補作成まで進めます。GitHub ActionsへCodex認証を複製しません。公式情報の差分履歴とモデル試行記録は`control-state.json.gz`に保存し、永続化容量が不足した場合は履歴を破棄せず停止します。
+
 ## ローカル修正候補の作成（v0.3）
 
 `repair prepare --finding ID --target VERSION`は、登録済み・同一ホスト・変更のないGit checkoutだけを扱います。入力は操作者が明示し、LLMの選択応答や勧告本文からこのコマンドを自動起動しません。最大5件、npm lockfile v3、同一major/minorの安定版patch、単純な末端依存が対象です。固定された依存指定、依存グラフ・ライセンス・実行条件の変更、install hook、symlink、未対応の指定はレビューへ回します。

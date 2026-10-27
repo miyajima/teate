@@ -121,7 +121,8 @@ def _patch_lock(data: dict, package: str, current: str, metadata: dict) -> dict:
     return result
 
 
-def prepare(ledger, policy: dict, state: Path, finding_ids: list[str], target: str) -> dict:
+def prepare(ledger, policy: dict, state: Path, finding_ids: list[str], target: str,
+            *, metadata_cache: dict | None = None) -> dict:
     if not finding_ids or len(finding_ids) > MAX_FINDINGS or len(set(finding_ids)) != len(finding_ids):
         raise TeateError("Select one to five distinct finding IDs")
     if not re.fullmatch(r"\d+\.\d+\.\d+", target):
@@ -137,7 +138,8 @@ def prepare(ledger, policy: dict, state: Path, finding_ids: list[str], target: s
         selected.append(finding)
     job = state.resolve() / "repairs" / uuid.uuid4().hex
     job.mkdir(parents=True)
-    records, metadata_cache = [], {}
+    records = []
+    metadata_cache = {} if metadata_cache is None else metadata_cache
     for asset_id in dict.fromkeys(f["asset_id"] for f in selected):
         items = [f for f in selected if f["asset_id"] == asset_id]
         record = {"asset_id": asset_id, "finding_ids": [f["id"] for f in items],
@@ -176,10 +178,15 @@ def prepare(ledger, policy: dict, state: Path, finding_ids: list[str], target: s
             })
             worktree = directory / "worktree"
             _git(source, "worktree", "add", "--detach", str(worktree), original["revision"])
+            patched_keys = set()
             for f in items:
+                key = (f["location"], f["package"])
+                if key in patched_keys:
+                    continue
                 path, data = _lock(worktree, f["location"])
                 patched = _patch_lock(data, f["package"], f["version"], metadata_cache[f["package"]])
                 path.write_text(json.dumps(patched, indent=2) + "\n")
+                patched_keys.add(key)
             if source_subject(source) != original or _git(source, "status", "--porcelain").strip():
                 raise TeateError("Source changed during preparation; review required")
             candidate = {**asset, "path": str(worktree)}

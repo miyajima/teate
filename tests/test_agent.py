@@ -190,6 +190,9 @@ class AgentContractTests(unittest.TestCase):
 
 class AgentCLITests(unittest.TestCase):
     def setUp(self):
+        self.intel = patch("teate.intel.refresh", return_value={"new": 0, "updated": 0, "unconfirmed": 0})
+        self.intel.start()
+        self.addCleanup(self.intel.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.config = self.root / "config.json"
@@ -224,7 +227,9 @@ class AgentCLITests(unittest.TestCase):
     def test_cycle_returns_one_packet_and_preserves_unknowns_on_network_failure(self, feed):
         code, packet = self.call("cycle", "--scanner", "npm-audit")
         self.assertEqual(code, 1)
-        self.assertEqual(packet["cycle"], {"feed_status": "error", "exit_code": 1})
+        self.assertEqual(packet["cycle"]["feed_status"], "error")
+        self.assertEqual(packet["cycle"]["exit_code"], 1)
+        self.assertEqual(packet["cycle"]["automation"]["llm_calls"], 0)
         self.assertEqual(packet["facts"]["unchecked_assets"], 1)
         self.assertTrue(packet["facts"]["requires_review"])
         _, report = self.call("render", "--format", "json")

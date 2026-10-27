@@ -18,6 +18,7 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ secrets.TEATE_GITHUB_TOKEN || github.token }}
+      TEATE_PREPARE_CANDIDATES: ${{ vars.TEATE_PREPARE_CANDIDATES }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -34,18 +35,19 @@ jobs:
         run: python scripts/checkout_assets.py
       - name: Read Mac and runtime receipts
         run: python scripts/ci_state.py receipts --repository "$GITHUB_REPOSITORY"
-      - name: Refresh known-exploited information
-        continue-on-error: true
-        run: python -m teate --config config/ci.json refresh-feeds
       - name: Assess and report
         id: scan
         continue-on-error: true
-        run: python -m teate --config config/ci.json run --sync-issues "$GITHUB_REPOSITORY"
+        run: |
+          command=(python -m teate --config config/ci.json agent cycle --scanner osv --sync-issues "$GITHUB_REPOSITORY")
+          if [ "$TEATE_PREPARE_CANDIDATES" = 'true' ]; then
+            command+=(--prepare)
+          fi
+          "${command[@]}" > .teate/agent-context.json
       - name: Persist ledger and report
         run: python scripts/ci_state.py save --repository "$GITHUB_REPOSITORY"
       - name: Prepare compact agent handoff without a model call
         run: |
-          python -m teate --config config/ci.json agent brief > .teate/agent-context.json
           python -m teate --config config/ci.json agent render > .teate/agent-report.txt
       - name: Publish run summary
         run: cat .teate/report.md >> "$GITHUB_STEP_SUMMARY"

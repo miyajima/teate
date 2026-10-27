@@ -10,7 +10,7 @@ Licensed under [MIT](LICENSE). See [SECURITY.md](SECURITY.md) and
 git clone https://github.com/miyajima/teate.git
 cd teate
 python3 -m teate init --root /path/to/projects --output config/local.json
-python3 -m teate agent cycle --scanner npm-audit
+python3 -m teate agent cycle --scanner npm-audit --prepare
 python3 -m teate agent render
 ```
 
@@ -23,12 +23,12 @@ private operations repository. The public CI runs synthetic unit tests only.
 
 Macとクラウドの脆弱性対応を、検出から修正・反映・解消確認までつなぎます。
 
-Teate v0.3はPython 3.11以降のCLIです。Python実行時の外部ライブラリは不要です。SQLiteの台帳、JSONの検査証跡、GitHub Issuesによる対応管理、隔離した修正候補の作成、Renovateによる修正PR、GitHub Actionsの実行フローを備えます。
+Teate v0.4はPython 3.11以降のCLIです。Python実行時の外部ライブラリは不要です。SQLiteの台帳、JSONの検査証跡、GitHub Issuesによる対応管理、隔離した修正候補の作成、Renovateによる修正PR、GitHub Actionsの実行フローを備えます。
 
-**中核処理はLLM不要です。** 検出・優先度・対応期限・マージ可否・解消確認はコードが決めます。LLMを呼び出し側に置く場合は、luna/maxを想定した短いJSON窓口を使います。任意の`agent advise`では、ChatGPT認証済みのCodex CLIを1回呼べます。APIキーへの切替はありません。モデルの応答がなくても、壊れていても定型レポートを生成できます。
+**中核処理はLLM不要です。** 検出・優先度・対応期限・マージ可否・解消確認はコードが決めます。LLMを呼び出し側に置く場合は、luna/maxを想定した短いJSON窓口を使います。通常処理はLLM呼び出し0回です。`cycle --llm codex`を明示した場合だけ、残った例外をChatGPT認証済みのCodex CLIで最大1件調査できます。APIキーへの切替はありません。モデルの応答がなくても、壊れていても定型レポートを生成できます。
 
 ```bash
-python3 -m teate agent cycle --scanner osv
+python3 -m teate agent cycle --scanner osv --prepare
 python3 -m teate agent render
 ```
 
