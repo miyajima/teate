@@ -148,6 +148,8 @@ class InstallerTests(unittest.TestCase):
                 self.assertEqual(download.call_count, 1)
             (bins / "tool").unlink()
             (bins / "tool").write_text("operator file")
+            installer.link(bins / "tool", bins / "tool")
+            self.assertFalse((bins / "tool").is_symlink())
             with self.assertRaisesRegex(ValueError, "unmanaged"):
                 installer.link(tools / "tool-1.0.0/tool", bins / "tool")
             self.assertEqual((bins / "tool").read_text(), "operator file")

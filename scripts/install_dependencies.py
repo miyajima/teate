@@ -169,6 +169,8 @@ def version_matches(executable: Path, version: str) -> bool:
 
 
 def link(source: Path, destination: Path) -> None:
+    if destination.exists() and source.samefile(destination):
+        return
     if destination.is_symlink():
         if destination.resolve() == source.resolve():
             return
