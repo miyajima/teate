@@ -2,6 +2,7 @@ import hashlib
 import shutil
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,7 +10,7 @@ import test_repair
 
 from teate.execution import cycle, execute, hook, hook_spec
 from teate.jobs import Jobs
-from teate.model import TeateError, digest
+from teate.model import TeateError, digest, snapshot
 from teate.store import Ledger
 
 
@@ -168,6 +169,63 @@ class ExecutionTests(unittest.TestCase):
             prepare.assert_not_called()
         self.assertEqual(self.calls, [])
         self.assertEqual(self.jobs.get(self.run["id"])["steps"], [])
+
+    def resolve_before_candidate_preparation(self):
+        self.jobs.update(
+            self.run["id"], "blocked",
+            record={**self.record, "status": "review", "reason": "sandbox_not_permitted"},
+        )
+        self.f.ledger.ingest(snapshot(
+            "demo", "npm-audit", "package-lock.json", {"type": "source", "revision": "external-fix"}, [],
+        ))
+
+    def test_fresh_external_resolution_retires_unstarted_run_without_operations(self):
+        self.resolve_before_candidate_preparation()
+        self.f.ledger.ingest(snapshot(
+            "demo", "npm-audit", "Cargo.lock", {"type": "source", "revision": "external-fix"}, [],
+            status="unsupported", complete=False,
+        ))
+        self.assertEqual(self.f.ledger.coverage()[0]["status"], "unknown")
+        with patch("teate.execution.authorize") as authorize:
+            result = self.execute()
+            authorize.assert_not_called()
+        self.assertEqual(result["status"], "stale")
+        self.assertEqual(result["reason"], "selected_findings_resolved_by_external_scan")
+        self.assertEqual(self.f.ledger.findings()[0]["effective_status"], "resolved")
+        self.assertEqual(self.jobs.get(self.run["id"])["steps"], [])
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.execute()["status"], "stale")
+
+    def test_failed_or_stale_latest_scan_cannot_retire_resolved_run(self):
+        self.resolve_before_candidate_preparation()
+        with patch("teate.execution.datetime") as clock:
+            clock.now.return_value = datetime.now(UTC) + timedelta(hours=49)
+            self.assertEqual(self.execute()["status"], "blocked")
+        self.f.ledger.ingest(snapshot(
+            "demo", "npm-audit", "package-lock.json", {"type": "source", "revision": "external-fix"}, [],
+            status="error", complete=False,
+        ))
+        self.assertEqual(self.execute()["status"], "blocked")
+        self.f.ledger.ingest(snapshot(
+            "demo", "npm-audit", "package-lock.json", {"type": "runtime", "revision": "wrong"}, [],
+        ))
+        self.assertEqual(self.execute()["status"], "blocked")
+        self.assertEqual(self.calls, [])
+
+    def test_empty_or_missing_selected_findings_do_not_retire_run(self):
+        self.resolve_before_candidate_preparation()
+        record = self.jobs.get(self.run["id"])["record"]
+        for identifiers in ([], [*record["finding_ids"], "missing"]):
+            with self.subTest(identifiers=identifiers):
+                self.jobs.update(self.run["id"], "blocked", record={**record, "finding_ids": identifiers})
+                self.assertEqual(self.execute()["status"], "blocked")
+
+    def test_existing_operation_intent_prevents_retirement_after_external_resolution(self):
+        self.resolve_before_candidate_preparation()
+        self.jobs.intent(self.run["id"], "deploy")
+        self.assertEqual(self.execute()["status"], "blocked")
+        self.assertEqual(self.jobs.get(self.run["id"])["steps"][0]["status"], "running")
+        self.assertEqual(self.calls, [])
 
     def test_failed_tests_prevent_all_external_writes(self):
         self.configure()

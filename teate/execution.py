@@ -50,6 +50,31 @@ def compact(run):
     }
 
 
+def selected_findings_resolved(ledger, asset, record, max_age_hours):
+    """Require fresh complete evidence for every selected finding's own scope."""
+    selected = set(record.get("finding_ids", []))
+    findings = {f["id"]: f for f in ledger.findings() if f["id"] in selected}
+    if not selected or set(findings) != selected or any(
+        f["asset_id"] != asset["id"] or f["effective_status"] != "resolved"
+        for f in findings.values()
+    ):
+        return False
+    coverage = next(c for c in ledger.coverage(max_age_hours) if c["asset"]["id"] == asset["id"])
+    scans = {(s["scanner"], s["scope"]): s for s in coverage["scans"]}
+    cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+    for finding in findings.values():
+        scan = scans.get((finding["scanner"], finding["scope"]))
+        if (
+            not scan
+            or scan["status"] != "success"
+            or not scan["complete"]
+            or timestamp(scan["observed_at"]) < cutoff
+            or not ledger._subject_valid(asset, scan)
+        ):
+            return False
+    return True
+
+
 def authorize(asset, policy, record):
     settings = asset.get("remediation", {})
     automation = policy.get("automation", {})
@@ -307,6 +332,17 @@ def _execute(ledger, policy, state, jobs, identifier):
         return {s["name"]: s for s in jobs.get(identifier)["steps"]}
 
     try:
+        if not steps() and selected_findings_resolved(
+            ledger, asset, record, policy.get("max_scan_age_hours", 48)
+        ):
+            return stop(
+                "stale",
+                "selected_findings_resolved_by_external_scan",
+                next_action=(
+                    "選択した指摘は新しい再検査で解消確認済みです。未実行runを終了しました。"
+                    "稼働先の解消は別途確認してください"
+                ),
+            )
         if record.get("status") != "candidate_ready":
             return stop(
                 "blocked",
