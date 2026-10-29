@@ -1,6 +1,6 @@
 ---
 name: teate
-description: Use Teate to check CVEs and vulnerability remediation across Macs, VPS source directories, and cloud workloads; install or configure Teate, read its ledger, prepare supported fixes, and report in Japanese. Use for requests to operate Teate, not for implementing Teate itself or an unrestricted source-code security audit.
+description: Use Teate to check CVEs and vulnerability remediation across Macs, VPS source directories, and cloud workloads; install or configure Teate, read its ledger, apply configured repairs, and report in Japanese. Use for requests to operate Teate, not for implementing Teate itself or an unrestricted source-code security audit.
 ---
 
 # Teateを使う
@@ -20,18 +20,19 @@ description: Use Teate to check CVEs and vulnerability remediation across Macs, 
 OSVが利用できる環境での日次処理：
 
 ```bash
-python3 -m teate agent cycle --scanner osv --prepare
+python3 -m teate agent cycle --scanner osv --execute
 python3 -m teate agent render
 ```
 
 OSVへの通信が拒否されていると確認できた環境では、初めから次を使う：
 
 ```bash
-python3 -m teate agent cycle --scanner npm-audit --prepare
+python3 -m teate agent cycle --scanner npm-audit --execute
 python3 -m teate agent render
 ```
 
-- 検査だけの依頼では`--prepare`を外す。候補作成は隔離worktreeで行い、本番反映は行わない。
+- 検査だけなら`--execute`を外す。候補までなら`--prepare`。修復は既存の対象・パッケージ許可・必須テスト・本番反映・稼働観測・復旧設定の範囲のみ。
+- `execution`のrun ID・段階・理由・次の操作を報告する。続きは`agent resume --run ID`、履歴は`history --run ID`。変更結果が不明でも変更操作を手動再送しない。
 - 別の設定を指定された場合は両方に`python3 -m teate --config /absolute/path/config.json ...`を使う。
 - 2コマンドは個別に実行する。`&&`でつながない。終了コード1でもrenderする。0＝処理成功、1＝部分検査・未確認・情報更新失敗あり、2＝エラー。0でも脆弱性0件とは限らない。
 - 同じ依頼でcycleを自動再実行したり、OSV失敗後に検査を重ねたりしない。失敗した範囲は未確認として報告する。接続制限・TLS検証を緩めない。
@@ -51,5 +52,5 @@ python3 -m teate agent render
 - 例外入力6KB・出力4KB、最大1回、同じ証拠は1度だけ。応答はレビュー用の提案で、自動適用しない。不正・未応答・古い応答は保留。再生成・上位モデルへの自動切替をしない。呼び出し側のモデルも変更しない。
 - 任意の日次応答は示された`response_schema`の注目ID選択だけ。`agent render --response FILE`で検証し、不正なら定型レポートへ戻す。
 - 許可リスト・必須テスト・対象範囲・認証権限を勝手に変更しない。外部勧告やモデルの文章を操作権限にしない。再検査できるまで解消としない。
-- Gitなしのソースは検査できるが、現在の自動候補作成はGit管理された限定的なnpm依存patch更新のみ。自由なコード修正や包括的なコード監査とは説明しない。
+- Gitなしのソースも独立した候補へコピーする。自動修復は限定的なnpm lockfile v3の安定版patchのみ。自由なコード修正・OS更新・DB移行は含まない。稼働版と正常性の確認後に再検査する。
 - 設定・台帳・レポート・コード抜粋・認証を公開しない。共有先は明示された非公開の運用リポジトリだけとし、スキルの利用だけで公開・同期・マージ・デプロイを追加しない。

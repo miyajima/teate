@@ -105,7 +105,10 @@ def _brief(ledger, policy: dict, *, cycle: dict | None = None) -> dict:
         or data["counts"]["overdue"]
         or cycle_attention
     )
-    identifier = state_id(data, ledger.assets(), policy)
+    from .jobs import Jobs
+    runs = Jobs(ledger).history()
+    run_state = [{k:r.get(k) for k in ("id", "status", "updated_at")} for r in runs]
+    identifier = digest([state_id(data, ledger.assets(), policy), run_state])
     identifiers = [item["id"] for item in items]
     result = {
         "schema_version": 1,
@@ -143,10 +146,25 @@ def _brief(ledger, policy: dict, *, cycle: dict | None = None) -> dict:
             },
         },
     }
+    if runs:
+        result["execution"] = [{k:clip(v, 100) if isinstance(v, str) else v for k,v in r.items()
+                                if k in {"id", "asset_id", "status", "phase", "reason", "next_action"}} for r in runs[:5]]
     if cycle:
+        cycle = dict(cycle)
+        if "execution" in cycle:
+            cycle["execution"] = [{k: clip(v, 120) if isinstance(v, str) else v for k,v in r.items()}
+                                  for r in cycle["execution"][:5]]
         result["cycle"] = cycle
-    if len((json.dumps(result, ensure_ascii=False, indent=2) + "\n").encode()) > MAX_BRIEF_BYTES:
-        raise TeateError("Agent brief exceeds its bounded context budget")
+    # Execution details may be read with history; facts and the ID-only contract
+    # always fit within the caller's fixed context budget.
+    while len((json.dumps(result, ensure_ascii=False, indent=2) + "\n").encode()) > MAX_BRIEF_BYTES:
+        if result.get("execution"):
+            result["execution"].pop()
+        elif result.get("cycle", {}).get("execution"):
+            result["cycle"]["execution"].pop()
+            result["cycle"]["execution_omitted"] = result["cycle"].get("execution_omitted", 0)+1
+        else:
+            raise TeateError("Agent brief exceeds its bounded context budget")
     return result
 
 
@@ -258,6 +276,10 @@ def render(
             f"公式フィード差分: 新規 {automation['intel_new']}件 / 更新 {automation['intel_updated']}件 / "
             f"取得未確認 {automation['intel_unconfirmed']}ソース"
         )
+    for run in current.get("execution", current.get("cycle", {}).get("execution", [])):
+        lines.append(f"実行 {run['id']}: {run['status']} / {run.get('reason', '')}")
+        if run.get("next_action"):
+            lines.append(run["next_action"])
     lines.append(
         "レビューが必要な項目があります。"
         if facts["requires_review"]

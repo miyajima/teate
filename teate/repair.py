@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import copy
+import difflib
 import json
 import platform
 import re
@@ -11,6 +11,8 @@ import urllib.request
 import uuid
 from pathlib import Path, PurePosixPath
 
+from . import sandbox
+from . import source as sources
 from .collect import run, scan_source, source_subject
 from .model import TeateError, digest, timestamp, utcnow, write_json
 from .policy import is_patch_update, merge_decision
@@ -36,9 +38,12 @@ def registry(package: str, target: str) -> dict:
         dist = version["dist"]
         tarball = urllib.parse.urlsplit(dist["tarball"])
         if (
-            version["name"] != package or version["version"] != target
-            or tarball.scheme != "https" or tarball.netloc != "registry.npmjs.org"
-            or tarball.query or tarball.fragment
+            version["name"] != package
+            or version["version"] != target
+            or tarball.scheme != "https"
+            or tarball.netloc != "registry.npmjs.org"
+            or tarball.query
+            or tarball.fragment
             or not re.fullmatch(r"sha512-[A-Za-z0-9+/]{86}==", dist["integrity"])
         ):
             raise ValueError("unexpected registry identity")
@@ -48,8 +53,20 @@ def registry(package: str, target: str) -> dict:
 
 
 def _git(root: Path, *args: str) -> str:
-    result = run(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-                  "-c", "submodule.recurse=false", "-C", str(root), *args])
+    result = run(
+        [
+            "git",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "submodule.recurse=false",
+            "-C",
+            str(root),
+            *args,
+        ]
+    )
     if result.returncode:
         raise TeateError("Git preparation failed; no live update was applied")
     return result.stdout
@@ -58,8 +75,10 @@ def _git(root: Path, *args: str) -> str:
 def _lock(root: Path, location: str) -> tuple[Path, dict]:
     relative = PurePosixPath(location)
     if (
-        relative.is_absolute() or ".." in relative.parts
-        or relative.name != "package-lock.json" or "node_modules" in relative.parts
+        relative.is_absolute()
+        or ".." in relative.parts
+        or relative.name != "package-lock.json"
+        or "node_modules" in relative.parts
     ):
         raise TeateError("Only existing project package-lock.json files are supported")
     path = root / location
@@ -77,156 +96,312 @@ def _lock(root: Path, location: str) -> tuple[Path, dict]:
     return path, data
 
 
-def _patch_lock(data: dict, package: str, current: str, metadata: dict) -> dict:
-    version = metadata["version"]
-    target = version["version"]
-    if not is_patch_update(current, target):
-        raise TeateError("Only stable same-major/minor patch candidates are supported")
-    result = copy.deepcopy(data)
-    locations = [p for p in result["packages"] if p.endswith("node_modules/" + package)]
-    if not locations:
-        raise TeateError("Package is missing from the lockfile")
-    # Do not guess about dependency graph, executable, lifecycle or platform changes.
-    for key in ("dependencies", "optionalDependencies", "peerDependencies", "bin",
-                "bundledDependencies", "bundleDependencies", "os", "cpu", "libc"):
-        if version.get(key):
-            raise TeateError("Package graph/lifecycle/platform metadata requires review")
-    if any(name in version.get("scripts", {}) for name in
-           ("preinstall", "install", "postinstall", "prepare")):
-        raise TeateError("Package install lifecycle requires review")
-    for location in locations:
-        old = result["packages"][location]
-        if old.get("version") != current:
-            raise TeateError("Multiple installed versions require review")
-        if any(old.get(k) != version.get(k) for k in ("license", "engines")):
-            raise TeateError("Package metadata changed; review required")
-        if not old.get("resolved", "").startswith("https://registry.npmjs.org/"):
-            raise TeateError("Nonstandard package source requires review")
-        if old.get("hasInstallScript") or old.get("link"):
-            raise TeateError("Executable lifecycle/link metadata requires review")
-        if any(old.get(k) for k in ("dependencies", "optionalDependencies", "peerDependencies", "bin")):
-            raise TeateError("Only leaf dependencies are supported for local repair")
-        for record in result["packages"].values():
-            for section in ("dependencies", "devDependencies", "optionalDependencies"):
-                requirement = record.get(section, {}).get(package)
-                if requirement is None:
-                    continue
-                match = re.fullmatch(r"[~^](\d+)\.(\d+)\.(\d+)", requirement)
-                wanted = tuple(map(int, match.groups())) if match else None
-                actual = tuple(map(int, target.split(".")))
-                if not wanted or wanted[0] == 0 or wanted[:2] != actual[:2] or wanted > actual:
-                    raise TeateError("Unsupported or pinned dependency constraint requires review")
-        old.update(version=target, resolved=version["dist"]["tarball"],
-                   integrity=version["dist"]["integrity"])
+def validate_lock(
+    before: dict, after: dict, selected: list[dict], target: str, metadata: dict
+) -> None:
+    """Validate an OSS-produced change; never resolve or write a lockfile ourselves."""
+    allowed = {f["package"]: f["version"] for f in selected}
+    if after.get("lockfileVersion") != 3 or before.keys() != after.keys():
+        raise TeateError("unsupported_lockfile_change")
+    if {k: v for k, v in before.items() if k != "packages"} != {
+        k: v for k, v in after.items() if k != "packages"
+    }:
+        raise TeateError("lockfile_root_changed")
+    old, new = before["packages"], after.get("packages", {})
+    if old.keys() != new.keys():
+        raise TeateError("dependency_graph_changed")
+    changed = 0
+    for location, record in old.items():
+        other = new[location]
+        if record == other:
+            continue
+        name = location.rsplit("node_modules/", 1)[-1]
+        if "node_modules/" not in location or name not in allowed:
+            raise TeateError("unselected_package_changed")
+        if (
+            record.get("version") != allowed[name]
+            or other.get("version") != target
+            or not is_patch_update(allowed[name], target)
+        ):
+            raise TeateError("only_stable_same_major_minor_patch_supported")
+        if not record.get("resolved", "").startswith("https://registry.npmjs.org/"):
+            raise TeateError("nonstandard_original_package_source")
+        version = metadata[name]["version"]
+        if version.get("name") != name or version.get("version") != target:
+            raise TeateError("registry_identity_changed")
+        for entry in (record, other, version):
+            if any(
+                entry.get(k)
+                for k in (
+                    "dependencies",
+                    "optionalDependencies",
+                    "peerDependencies",
+                    "bin",
+                    "bundledDependencies",
+                    "bundleDependencies",
+                    "os",
+                    "cpu",
+                    "libc",
+                    "hasInstallScript",
+                    "link",
+                )
+            ):
+                raise TeateError("package_graph_lifecycle_platform_requires_review")
+        if any(
+            k in version.get("scripts", {})
+            for k in ("preinstall", "install", "postinstall", "prepare")
+        ):
+            raise TeateError("package_install_lifecycle_requires_review")
+        fields = {"version", "resolved", "integrity"}
+        if {k: v for k, v in record.items() if k not in fields} != {
+            k: v for k, v in other.items() if k not in fields
+        }:
+            raise TeateError("package_metadata_changed")
+        if any(record.get(k) != version.get(k) for k in ("license", "engines")):
+            raise TeateError("package_metadata_changed")
+        dist = version["dist"]
+        if other.get("resolved") != dist["tarball"] or other.get("integrity") != dist["integrity"]:
+            raise TeateError("registry_integrity_mismatch")
+        changed += 1
+    if not changed:
+        raise TeateError("no_supported_patch_change")
+
+
+def backend(root: Path, location: str, selected: list[dict], scanner: str) -> dict:
+    cwd = (root / location).parent
+    if scanner == "npm-audit":
+        argv = [
+            "npm",
+            "audit",
+            "fix",
+            "--package-lock-only",
+            "--ignore-scripts",
+            "--no-fund",
+            "--registry=https://registry.npmjs.org",
+        ]
+        network = "npm"
+    elif scanner == "osv":
+        argv = [
+            "osv-scanner",
+            "fix",
+            "--strategy=in-place",
+            "--format=json",
+            "-L",
+            str(root / location),
+            "-M",
+            str(cwd / "package.json"),
+            "--upgrade-config=none",
+            "--no-introduce",
+        ]
+        for name in sorted({f["package"] for f in selected}):
+            argv += ["--upgrade-config=" + name + ":patch"]
+        for advisory in sorted({f["advisory_id"] for f in selected}):
+            argv += ["--vulns=" + advisory]
+        network = "osv"
+    else:
+        raise TeateError("unsupported_repair_scanner")
+    result = sandbox.execute(root, argv, cwd=cwd, network=network)
+    # npm exits 1 when other advisories remain. Full diff validation and same-scope
+    # rescans, not the exit code alone, decide whether a candidate is acceptable.
+    if (
+        result.get("exit_code") not in (0, 1)
+        or result.get("timed_out")
+        or result["status"] == "blocked"
+    ):
+        raise TeateError(result.get("reason") or "repair_backend_unavailable_or_failed")
     return result
 
 
-def prepare(ledger, policy: dict, state: Path, finding_ids: list[str], target: str,
-            *, metadata_cache: dict | None = None) -> dict:
-    if not finding_ids or len(finding_ids) > MAX_FINDINGS or len(set(finding_ids)) != len(finding_ids):
+def verified_scans(scans: list[dict], baseline: list[dict], items: list[dict]) -> None:
+    expected = {f["scope"] for f in items}
+    complete = {s["scope"] for s in scans if s["status"] == "success" and s["complete"]}
+    if not expected <= complete:
+        raise TeateError("Candidate scope could not be verified")
+    old = {
+        (f.get("location", s["scope"]), f["advisory_id"], f["package"])
+        for s in baseline
+        for f in s["findings"]
+    }
+    new = {
+        (f.get("location", s["scope"]), f["advisory_id"], f["package"])
+        for s in scans
+        for f in s["findings"]
+    }
+    if new - old:
+        raise TeateError("Candidate introduced additional findings")
+    if new & {(f["location"], f["advisory_id"], f["package"]) for f in items}:
+        raise TeateError("Candidate did not remove the target finding")
+
+
+def prepare(
+    ledger,
+    policy: dict,
+    state: Path,
+    finding_ids: list[str],
+    target: str,
+    *,
+    metadata_cache: dict | None = None,
+    scanner: str = "npm-audit",
+) -> dict:
+    if (
+        not finding_ids
+        or len(finding_ids) > MAX_FINDINGS
+        or len(set(finding_ids)) != len(finding_ids)
+    ):
         raise TeateError("Select one to five distinct finding IDs")
     if not re.fullmatch(r"\d+\.\d+\.\d+", target):
         raise TeateError("An explicit stable target version is required")
     findings = {f["id"]: f for f in ledger.findings()}
-    selected = []
+    items = []
     for identifier in finding_ids:
-        finding = findings.get(identifier)
-        if not finding or finding["effective_status"] in {"resolved", "accepted_risk"}:
-            raise TeateError("Finding is missing, resolved or accepted risk")
-        if finding.get("malicious") or finding["ecosystem"] != "npm":
-            raise TeateError("This finding requires manual investigation")
-        selected.append(finding)
+        f = findings.get(identifier)
+        if (
+            not f
+            or f["effective_status"] in {"resolved", "accepted_risk"}
+            or f.get("malicious")
+            or f["ecosystem"] != "npm"
+        ):
+            raise TeateError("Finding missing or requires manual investigation")
+        if f["scanner"] != scanner or not is_patch_update(f["version"], target):
+            raise TeateError("Finding scanner/version does not match repair backend")
+        items.append(f)
     job = state.resolve() / "repairs" / uuid.uuid4().hex
     job.mkdir(parents=True)
     records = []
-    metadata_cache = {} if metadata_cache is None else metadata_cache
-    for asset_id in dict.fromkeys(f["asset_id"] for f in selected):
-        items = [f for f in selected if f["asset_id"] == asset_id]
-        record = {"asset_id": asset_id, "finding_ids": [f["id"] for f in items],
-                  "status": "review", "live_applied": False, "resolved": False}
+    metadata = {} if metadata_cache is None else dict(metadata_cache)
+    for asset_id in dict.fromkeys(f["asset_id"] for f in items):
+        selected = [f for f in items if f["asset_id"] == asset_id]
+        record = {
+            "asset_id": asset_id,
+            "finding_ids": [f["id"] for f in selected],
+            "status": "review",
+            "live_applied": False,
+            "resolved": False,
+            "scanner": scanner,
+        }
         records.append(record)
         try:
             asset = ledger.asset(asset_id)
-            if asset["kind"] != "source" or asset.get("host_id", platform.node()) != platform.node():
+            if (
+                asset["kind"] != "source"
+                or asset.get("host_id", platform.node()) != platform.node()
+            ):
                 raise TeateError("Asset is not a source on this verified host")
-            source = Path(asset["path"]).resolve()
-            if _git(source, "status", "--porcelain", "--untracked-files=normal").strip():
-                raise TeateError("Source checkout has local changes; review required")
-            # A worktree checkout must not invoke configured external content filters.
-            filters = run(["git", "-C", str(source), "config", "--name-only",
-                           "--get-regexp", r"^filter\."])
-            if filters.returncode not in (0, 1) or filters.stdout.strip():
-                raise TeateError("Configured checkout filters require manual preparation")
-            original = source_subject(source)
-            baseline = scan_source(asset, scanner="npm-audit")
+            root = Path(asset["path"]).resolve()
+            if (root / ".git").is_symlink():
+                raise TeateError("Symlink Git metadata requires review")
+            if (root / ".git").exists():
+                # Even status may invoke clean filters. Reject them before any
+                # Git status operation, not only before a checkout.
+                filters = run(
+                    ["git", "-C", str(root), "config", "--name-only", "--get-regexp", r"^filter\."]
+                )
+                if filters.returncode not in (0, 1) or filters.stdout.strip():
+                    raise TeateError("Configured checkout filters require manual preparation")
+                if _git(root, "status", "--porcelain", "--untracked-files=normal").strip():
+                    raise TeateError("Source checkout has local changes; review required")
+            original = source_subject(root)
+            baseline = scan_source(asset, scanner=scanner)
             directory = job / digest(asset_id)[:16]
             directory.mkdir()
             write_json(directory / "baseline.json", baseline)
-            for f in items:
-                _, old = _lock(source, f.get("location", ""))
-                scans = [s for s in baseline if s["scope"] == f["location"]]
-                if not scans or not all(s["status"] == "success" and s["complete"] for s in scans):
+            for f in selected:
+                _lock(root, f["location"])
+                scopes = [s for s in baseline if s["scope"] == f["scope"]]
+                if not scopes or not all(
+                    s["status"] == "success" and s["complete"] for s in scopes
+                ):
                     raise TeateError("Baseline scope could not be verified")
-                if not any(v["advisory_id"] == f["advisory_id"] and v["package"] == f["package"]
-                           for s in scans for v in s["findings"]):
-                    raise TeateError("Finding changed since the ledger scan; rescan the live asset")
-                if f["package"] not in metadata_cache:
-                    metadata_cache[f["package"]] = registry(f["package"], target)
-                _patch_lock(old, f["package"], f["version"], metadata_cache[f["package"]])
-            write_json(directory / "registry.json", {
-                f["package"]: metadata_cache[f["package"]] for f in items
-            })
+                if not any(
+                    v["package"] == f["package"] and v["advisory_id"] == f["advisory_id"]
+                    for s in scopes
+                    for v in s["findings"]
+                ):
+                    raise TeateError("Finding changed since the ledger scan")
+                if f["package"] not in metadata:
+                    metadata[f["package"]] = registry(f["package"], target)
             worktree = directory / "worktree"
-            _git(source, "worktree", "add", "--detach", str(worktree), original["revision"])
-            patched_keys = set()
-            for f in items:
-                key = (f["location"], f["package"])
-                if key in patched_keys:
-                    continue
-                path, data = _lock(worktree, f["location"])
-                patched = _patch_lock(data, f["package"], f["version"], metadata_cache[f["package"]])
-                path.write_text(json.dumps(patched, indent=2) + "\n")
-                patched_keys.add(key)
-            if source_subject(source) != original or _git(source, "status", "--porcelain").strip():
-                raise TeateError("Source changed during preparation; review required")
-            candidate = {**asset, "path": str(worktree)}
-            scans = scan_source(candidate, scanner="npm-audit")
-            write_json(directory / "candidate.json", scans)
-            before_ids = {(s["scope"], v["advisory_id"], v["package"])
-                          for s in baseline for v in s["findings"]}
-            new_ids = {(s["scope"], v["advisory_id"], v["package"])
-                       for s in scans for v in s["findings"]} - before_ids
-            if new_ids:
-                raise TeateError("Candidate scan introduced additional findings")
-            for f in items:
-                scoped = [s for s in scans if s["scope"] == f["location"]]
-                if not scoped or not all(s["status"] == "success" and s["complete"] for s in scoped):
-                    raise TeateError("Candidate scope could not be verified")
-                if any(v["advisory_id"] == f["advisory_id"] and v["package"] == f["package"]
-                       for s in scoped for v in s["findings"]):
-                    raise TeateError("Candidate did not remove the target finding")
-            if source_subject(source) != original:
-                raise TeateError("Source changed during candidate verification; review required")
-            patch = _git(worktree, "diff", "--no-ext-diff", "--no-textconv", "--binary")
-            (directory / "candidate.patch").write_text(patch)
-            update = {"author": None, "head_sha": None, "checks": [], "sensitive_change": False,
-                      "packages": [{"name": f["package"], "from": f["version"], "to": target}
-                                   for f in items],
-                      "published_at": max(metadata_cache[f["package"]]["published_at"] for f in items)}
-            record.update(status="candidate_ready", worktree=str(worktree),
-                          patch=str(directory / "candidate.patch"),
-                          subject=source_subject(worktree),
-                          target_scopes_verified=len({f["location"] for f in items}),
-                          unverified_scopes=[s["scope"] for s in scans
-                                             if s["status"] != "success" or not s["complete"]],
-                          merge_decision=merge_decision(update, policy),
-                          tests="pending_project_tests_and_commit_specific_CI")
-            for f in items:
-                ledger.mark(f["id"], "proposed", "Teate prepared an isolated candidate: " + str(job))
+            before = sources.copy(root, worktree)
+            backend_results = []
+            record["backend"] = backend_results
+            for location in sorted({f["location"] for f in selected}):
+                _, old = _lock(root, location)
+                local = [f for f in selected if f["location"] == location]
+                backend_results.append(backend(worktree, location, local, scanner))
+                _, new = _lock(worktree, location)
+                validate_lock(old, new, local, target, metadata)
+            changed = sources.changes(before, sources.files(worktree, include_private=True))
+            if not changed or set(changed) - {f["location"] for f in selected}:
+                raise TeateError("unauthorized_candidate_file_change")
+            if any(
+                before[p].split(":")[-1]
+                != sources.files(worktree, include_private=True)[p].split(":")[-1]
+                for p in changed
+            ):
+                raise TeateError("candidate_file_mode_changed")
+            if sources.files(root) != before or source_subject(root) != original:
+                raise TeateError("Source changed during candidate preparation")
+            scans = scan_source({**asset, "path": str(worktree)}, scanner=scanner)
+            write_json(directory / "candidate-scan.json", scans)
+            verified_scans(scans, baseline, selected)
+            if sources.files(root) != before:
+                raise TeateError("Source changed during candidate verification")
+            diff = "".join(
+                "".join(
+                    difflib.unified_diff(
+                        (root / name).read_text().splitlines(True),
+                        (worktree / name).read_text().splitlines(True),
+                        fromfile="a/" + name,
+                        tofile="b/" + name,
+                    )
+                )
+                for name in changed
+            )
+            (directory / "candidate.patch").write_text(diff)
+            update = {
+                "author": None,
+                "head_sha": None,
+                "checks": [],
+                "sensitive_change": False,
+                "packages": [
+                    {"name": f["package"], "from": f["version"], "to": target} for f in selected
+                ],
+                "published_at": max(metadata[f["package"]]["published_at"] for f in selected),
+            }
+            record.update(
+                status="candidate_ready",
+                worktree=str(worktree),
+                patch=str(directory / "candidate.patch"),
+                original_subject=original,
+                source_files=before,
+                candidate_files=sources.files(worktree, include_private=True),
+                subject=source_subject(worktree),
+                target=target,
+                metadata={f["package"]: metadata[f["package"]] for f in selected},
+                policy_id=digest(policy),
+                asset_id_at_prepare=digest(asset),
+                backend=backend_results,
+                changed_files=changed,
+                update=update,
+                target_scopes_verified=len({f["scope"] for f in selected}),
+                unverified_scopes=[
+                    s["scope"] for s in scans if s["status"] != "success" or not s["complete"]
+                ],
+                merge_decision=merge_decision(update, policy),
+                tests="pending_project_tests_and_commit_specific_CI",
+            )
+            for f in selected:
+                ledger.mark(f["id"], "proposed", "Isolated repair candidate: " + job.name)
         except (TeateError, OSError, ValueError, KeyError, TypeError) as exc:
-            record["status"] = "review"
             record["reason"] = str(exc) if isinstance(exc, TeateError) else type(exc).__name__
-    result = {"schema_version": 1, "created_at": utcnow(), "job": str(job),
-              "requires_review": True, "live_applied": False, "results": records}
+    result = {
+        "schema_version": 2,
+        "created_at": utcnow(),
+        "job": str(job),
+        "job_id": job.name,
+        "requires_review": True,
+        "live_applied": False,
+        "results": records,
+    }
     write_json(job / "result.json", result)
     return result

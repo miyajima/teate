@@ -57,7 +57,11 @@ def discover(root: Path) -> list[dict]:
             continue
         if (path / ".git").exists() or any((path / name).exists() for name in LOCKFILES):
             repository = ""
-            ref = run(["git", "-C", str(path), "remote", "get-url", "origin"])
+            ref = (
+                run(["git", "-C", str(path), "remote", "get-url", "origin"])
+                if shutil.which("git") and (path / ".git").exists()
+                else subprocess.CompletedProcess([], 1, "", "")
+            )
             if ref.returncode == 0:
                 # Drop any embedded URL credentials before putting a remote in the inventory.
                 import urllib.parse
@@ -98,7 +102,11 @@ def lockfiles(root: Path) -> list[str]:
 
 
 def source_subject(root: Path) -> dict:
-    sha = run(["git", "-C", str(root), "rev-parse", "HEAD"])
+    sha = (
+        run(["git", "-C", str(root), "rev-parse", "HEAD"])
+        if shutil.which("git") and (root / ".git").exists()
+        else subprocess.CompletedProcess([], 1, "", "")
+    )
     # Uncommitted lockfile changes must have their own identity too.
     locks = lockfiles(root)
     hashes = {p: digest((root / p).read_text(errors="replace")) for p in locks}
@@ -348,11 +356,32 @@ def scan_source(asset: dict, *, scanner: str = "osv") -> list[dict]:
             continue
         try:
             # npm audit is read-only; --ignore-scripts prevents project lifecycle hooks.
-            result = run(
-                ["npm", "audit", "--package-lock-only", "--ignore-scripts", "--json"],
-                cwd=(root / lock).parent,
-                timeout=180,
-            )
+            with tempfile.TemporaryDirectory(prefix="teate-npm-audit-") as temporary:
+                directory = Path(temporary)
+                shutil.copy2(root / lock, directory / Path(lock).name)
+                manifest = (root / lock).parent / "package.json"
+                if manifest.is_file() and not manifest.is_symlink():
+                    shutil.copy2(manifest, directory / "package.json")
+                (directory / "user.npmrc").write_text("")
+                (directory / "global.npmrc").write_text("")
+                result = run(
+                    [
+                        "npm",
+                        "audit",
+                        "--package-lock-only",
+                        "--ignore-scripts",
+                        "--json",
+                        "--include=dev",
+                        "--include=optional",
+                        "--include=peer",
+                        "--registry=https://registry.npmjs.org",
+                        "--cache=" + str(directory / "cache"),
+                        "--userconfig=" + str(directory / "user.npmrc"),
+                        "--globalconfig=" + str(directory / "global.npmrc"),
+                    ],
+                    cwd=directory,
+                    timeout=180,
+                )
             if result.returncode not in (0, 1):
                 raise TeateError(f"npm audit exited {result.returncode}; check registry access")
             raw = json.loads(result.stdout)
