@@ -43,6 +43,7 @@ jobs:
           ./scripts/install.ps1 -All -DryRun
   sandbox-integration:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
