@@ -432,8 +432,13 @@ def execute(args) -> int:
                     write_json(state / "summary.json", data)
                     (state / "report.md").write_text(markdown(data))
                     cycle_info["exit_code"] = exit_code
-                    packet = brief(ledger, policy, cycle=cycle_info)
-                    write_json(state / "agent" / "brief.json", packet)
+                    from .cycle_status import changes
+
+                    with ledger.db:
+                        ledger.db.execute("BEGIN IMMEDIATE")
+                        cycle_info["changes"] = changes(ledger)
+                        packet = brief(ledger, policy, cycle=cycle_info)
+                        write_json(state / "agent" / "brief.json", packet)
                     output(packet)
                 else:
                     output(

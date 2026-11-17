@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE TABLE IF NOT EXISTS observations (
  asset_id TEXT PRIMARY KEY REFERENCES assets(id), observed_at TEXT NOT NULL,
  data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS agent_cycle_baseline (
+ id INTEGER PRIMARY KEY CHECK(id=1), observed_at TEXT NOT NULL, statuses TEXT NOT NULL);
 """
 
 

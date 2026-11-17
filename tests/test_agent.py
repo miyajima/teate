@@ -230,10 +230,17 @@ class AgentCLITests(unittest.TestCase):
         self.assertEqual(packet["cycle"]["feed_status"], "error")
         self.assertEqual(packet["cycle"]["exit_code"], 1)
         self.assertEqual(packet["cycle"]["automation"]["llm_calls"], 0)
+        self.assertEqual(packet["facts"]["changes"]["status"], "baseline_unavailable")
         self.assertEqual(packet["facts"]["unchecked_assets"], 1)
         self.assertTrue(packet["facts"]["requires_review"])
         _, report = self.call("render", "--format", "json")
         self.assertIn("情報の更新に失敗", report["text"])
+        self.assertEqual(report["facts"]["changes"], packet["facts"]["changes"])
+        _, second = self.call("cycle", "--scanner", "npm-audit")
+        self.assertEqual(second["facts"]["changes"]["status"], "compared")
+        self.assertEqual(second["facts"]["changes"]["new"], 0)
+        _, report = self.call("render", "--format", "json")
+        self.assertEqual(report["facts"]["changes"], second["facts"]["changes"])
 
     @patch("teate.cli.fetch_kev", side_effect=TeateError("unavailable"))
     def test_corrupt_feed_does_not_prevent_a_cycle_from_reporting_gaps(self, feed):

@@ -15,6 +15,11 @@ OSVに接続できる環境は最初から `--scanner osv`。失敗後の自動�
 未登録の対象をAIが自分で許可しない。
 
 - JSON最大12KB。`facts` が正本。注目候補5件、未確認例2件まで。
+- `facts.changes` は前回完了cycleと全指摘IDを比較した件数。5件の表示枠から数えない。
+  `new` は新たな未解消（再検出・期限付き例外の終了を含む）、`continuing` は継続、
+  `resolved_new` は台帳で解消確認された件数。`missing` は照合不能で解消に含めない。
+  初回・比較基準破損時は `status: baseline_unavailable`、件数はnull。ゼロと解釈しない。
+  `since` から `observed_at` の期間を使う。render/briefは比較基準を更新しない。
 - `execution` のrun ID・段階・理由・次の操作を使う。詳細は `history --run ID`。
 - 中断やCI待ちは `agent resume --run ID`。操作結果が不明なら観測のみ行い、変更操作を再送しない。
 - 終了0でも脆弱性ゼロとは限らない。1は部分検査・保留、2はエラー。
