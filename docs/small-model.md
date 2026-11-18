@@ -20,6 +20,8 @@ OSVに接続できる環境は最初から `--scanner osv`。失敗後の自動�
   `resolved_new` は台帳で解消確認された件数。`missing` は照合不能で解消に含めない。
   初回・比較基準破損時は `status: baseline_unavailable`、件数はnull。ゼロと解釈しない。
   `since` から `observed_at` の期間を使う。render/briefは比較基準を更新しない。
+  上流勧告の取り下げ等で指摘が再検査から消える場合もある。`resolved_new`から修復・配備や
+  稼働先の解消を推測せず、実行履歴と対象環境の証跡を確認する。
 - `execution` のrun ID・段階・理由・次の操作を使う。詳細は `history --run ID`。
 - 中断やCI待ちは `agent resume --run ID`。操作結果が不明なら観測のみ行い、変更操作を再送しない。
 - 終了0でも脆弱性ゼロとは限らない。1は部分検査・保留、2はエラー。

@@ -250,6 +250,8 @@ def render(
                 f"前回cycle比: 新規 {changes['new']} / 継続 {changes['continuing']} / "
                 f"解消確認 {changes['resolved_new']}"
             )
+            if changes["resolved_new"]:
+                lines.append("解消確認は台帳の再検査結果です。修復・配備・稼働先の確認は実行履歴と対象環境の証跡で確認してください。")
             if changes["missing"]:
                 lines.append(f"前回の指摘 {changes['missing']}件を照合できません。解消には数えません。")
         else:

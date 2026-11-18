@@ -61,8 +61,9 @@ class CycleChangesTests(unittest.TestCase):
         delta, _ = self.checkpoint()
         self.assertEqual((delta["continuing"], delta["resolved_new"]), (30, 0))
         self.scan(0)
-        delta, _ = self.checkpoint()
+        delta, packet = self.checkpoint()
         self.assertEqual((delta["continuing"], delta["resolved_new"]), (0, 30))
+        self.assertIn("実行履歴と対象環境の証跡", render(packet)["text"])
 
     def test_risk_acceptance_is_not_resolution_and_expiry_is_newly_open(self):
         self.checkpoint()
