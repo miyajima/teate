@@ -7,7 +7,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import intel, repair
+from . import intel, repair, source
 from .collect import scan_source, source_subject
 from .model import TeateError, digest, load_json, timestamp, utcnow, write_json
 from .policy import is_patch_update, plan
@@ -51,14 +51,14 @@ def _read(path: Path) -> dict:
 def _scan_candidate(ledger, record: dict, findings: list[dict], filename: str) -> bool:
     asset = ledger.asset(record["asset_id"])
     path = Path(record["worktree"])
-    scans = scan_source({**asset, "path": str(path)}, scanner="npm-audit")
+    scans = scan_source({**asset, "path": str(path)}, scanner=record.get("scanner", "npm-audit"))
     selected = [f for f in findings if f["asset_id"] == asset["id"]]
-    scopes = {f["location"] for f in selected}
+    scopes = {f["scope"] for f in selected}
     actual = {s["scope"] for s in scans if s["status"] == "success" and s["complete"]}
     live = {(f["location"], f["advisory_id"], f["package"]) for f in ledger.findings()
             if f["asset_id"] == asset["id"] and f["effective_status"] != "resolved"}
     target = {(f["location"], f["advisory_id"], f["package"]) for f in selected}
-    remaining = {(s["scope"], v["advisory_id"], v["package"]) for s in scans for v in s["findings"]}
+    remaining = {(v.get("location", s["scope"]), v["advisory_id"], v["package"]) for s in scans for v in s["findings"]}
     write_json(path.parent/filename, {"checked_at": utcnow(), "scans": scans})
     return scopes <= actual and not (remaining & target) and not (remaining - live)
 
@@ -77,8 +77,7 @@ def _cached(ledger, entry: dict, findings: list[dict], state: Path) -> dict | No
             tree = _tree_id(path)
             if tree is None or tree != entry["tree_ids"][record["asset_id"]]:
                 return None
-            patch = repair._git(path, "diff", "--no-ext-diff", "--no-textconv", "--binary")
-            if digest(patch) != entry["patch_ids"][record["asset_id"]]:
+            if source.files(path, include_private=True) != record.get("candidate_files"):
                 return None
             if not _scan_candidate(ledger, record, findings, "cached-recheck.json"):
                 return None
@@ -87,7 +86,7 @@ def _cached(ledger, entry: dict, findings: list[dict], state: Path) -> dict | No
         return None
 
 
-def run(ledger, policy: dict, state: Path, *, prepare: bool = False, catalog: dict | None = None) -> dict:
+def run(ledger, policy: dict, state: Path, *, prepare: bool = False, catalog: dict | None = None, scanner: str = "npm-audit") -> dict:
     root = state/"autopilot"
     catalog = {} if catalog is None else catalog
     index = _read(root/"cache.json")
@@ -95,7 +94,17 @@ def run(ledger, policy: dict, state: Path, *, prepare: bool = False, catalog: di
                 if f["effective_status"] not in {"resolved", "accepted_risk"}]
     order = {a["finding_id"]: i for i, a in enumerate(plan(findings, ledger.assets(), policy))}
     findings.sort(key=lambda f: order[f["id"]])
-    chosen = findings[:MAX_FINDINGS]
+    # A blocked first page must not permanently starve independent assets.
+    cursor = _read(root/"queue.json").get("cursor", 0)
+    cursor = cursor if type(cursor) is int and cursor >= 0 else 0
+    if prepare and len(findings) > MAX_FINDINGS:
+        head = findings[:1]  # Preserve the highest-priority item on every cycle.
+        tail = findings[1:]
+        offset = cursor % len(tail)
+        chosen = head + (tail[offset:] + tail[:offset])[:MAX_FINDINGS-1]
+        write_json(root/"queue.json", {"cursor": offset+MAX_FINDINGS-1})
+    else:
+        chosen = findings[:MAX_FINDINGS]
     groups, recipes, decisions = {}, {}, []
     for finding in chosen:
         key = (finding["ecosystem"], finding["package"], finding["version"], finding["advisory_id"])
@@ -136,7 +145,7 @@ def run(ledger, policy: dict, state: Path, *, prepare: bool = False, catalog: di
             subjects = {a["id"]: source_subject(Path(a["path"])) for a in assets}
             evidence = {"findings": [{k: f.get(k) for k in ("id", "asset_id", "package", "version", "location", "advisory_id")} for f in items],
                         "subjects": subjects, "assets": assets, "policy": policy,
-                        "metadata": metadata, "sources": sources}
+                        "metadata": metadata, "sources": sources, "scanner": scanner}
             identifier = digest(evidence)
             semantic = {**evidence, "subjects": {i:{k:v for k,v in s.items() if k != "host_id"} for i,s in subjects.items()}}
             decision.update(target=target, sources=sources, evidence_id=identifier,
@@ -146,7 +155,7 @@ def run(ledger, policy: dict, state: Path, *, prepare: bool = False, catalog: di
                 continue
             saved = _cached(ledger, index.get(identifier, {}), items, state)
             result = saved or repair.prepare(ledger, policy, state, [f["id"] for f in items], target,
-                                              metadata_cache={first["package"]: metadata})
+                                              metadata_cache={first["package"]: metadata}, scanner=scanner)
             if saved:
                 counts["reused_groups"] += 1
             for record in result["results"]:
@@ -160,7 +169,7 @@ def run(ledger, policy: dict, state: Path, *, prepare: bool = False, catalog: di
                 status = record["verification"]["status"]
                 if not saved:
                     path = Path(record["worktree"])
-                    if source_subject(path) != record["subject"] or repair._git(path,"diff","--no-ext-diff","--no-textconv","--binary") != Path(record["patch"]).read_text():
+                    if source_subject(path) != record["subject"] or source.files(path, include_private=True) != record.get("candidate_files"):
                         record.update(status="review", reason="test_execution_changed_candidate")
                     elif status == "passed" and not _scan_candidate(ledger,record,items,"post-test-recheck.json"):
                         record.update(status="review", reason="post_test_scan_not_verified")
@@ -175,7 +184,7 @@ def run(ledger, policy: dict, state: Path, *, prepare: bool = False, catalog: di
             if all(r["status"] == "candidate_ready" for r in result["results"]):
                 index[identifier] = {"created_at": index[identifier]["created_at"] if saved else utcnow(), "result": result,
                                      "tree_ids": {r["asset_id"]: _tree_id(Path(r["worktree"])) for r in result["results"]},
-                                     "patch_ids": {r["asset_id"]: digest(repair._git(Path(r["worktree"]), "diff", "--no-ext-diff", "--no-textconv", "--binary")) for r in result["results"]}}
+                                     "patch_ids": {r["asset_id"]: digest(source.files(Path(r["worktree"]), include_private=True)) for r in result["results"]}}
         except (TeateError, OSError, KeyError, ValueError, TypeError) as exc:
             decision["reason"] = str(exc) if isinstance(exc, TeateError) else type(exc).__name__
             # Missing auth, connectivity, tools or permissions are operational blockers.

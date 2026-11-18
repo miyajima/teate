@@ -1,87 +1,134 @@
-# 運用・接続手順
+# 修復の登録と運用（v0.5）
 
-## v0.4の日次処理とテスト
+Teateは「候補 → テスト → 反映 → 稼働観測 → 正常性確認 → 再検査」を記録します。
+修復はnpm/OSV、隔離はsandbox-runtime、ツールの取得・展開はmise、フィード解析はfeedparserに委譲します。
+本番コマンドは運用者の登録が必要です。AIや外部テキストからコマンドを自動承認しません。
 
-`agent cycle --scanner npm-audit --prepare`で、検査・公式フィード差分・修正版候補の調査・対応済みの候補作成・設定済みのテスト・再検査まで実行します。通常はモデル呼び出し0回です。KEVに加えてJPCERT/CC・JVN・Node.js公式RSS/Atomを取得し、最終成功時点から48時間重複、初回7日を中心に変更を記録します。取得不能は未確認で、成功日時を進めません。RSSの掲載自体から、管理対象の利用・影響・悪用・修正済みを判断しません。
+## 許可する設定
 
-修正版はscannerの構造化フィールドか、対象packageに一致するGitHub公式Advisory APIから取得し、公式npmレジストリで版・配布元・SHA512・公開時刻を検証します。新しい版はあくまで候補で、対象の指摘が実際に消えるかを再検査します。台帳の`fixed_versions`を推測で書き換えません。
-
-各source資産の非公開設定に、操作者が`verification`を明示できます。
+`config/local.json` の対象source資産に、以下を追加します。これは契約例です。
+`/opt/teate-hooks/*` は実際の運用手順を実装した、ソースの外にある運用者管理の実行ファイルに置き換えます。
+Teateが汎用のVPS上書きや任意のSSH接続を行うことはありません。
 
 ```json
 {
   "verification": {
-    "commands": [
-      {"name": "unit", "argv": ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"], "cwd": ".", "timeout_seconds": 60}
-    ],
-    "discard_outputs": [],
-    "context_files": ["src/example.py"]
+    "install_dependencies": true,
+    "commands": [{"name": "test", "argv": ["npm", "test"], "timeout_seconds": 120}]
+  },
+  "remediation": {
+    "enabled": true,
+    "mode": "local",
+    "runtime_assets": ["app-production"],
+    "deploy": {
+      "argv": ["/opt/teate-hooks/deploy", "{candidate}", "{run_id}", "{candidate_id}"],
+      "sha256": "実行ファイルのSHA256"
+    },
+    "observe": {
+      "argv": ["/opt/teate-hooks/observe", "{run_id}", "{candidate_id}"],
+      "sha256": "実行ファイルのSHA256"
+    },
+    "health": {
+      "argv": ["/opt/teate-hooks/health", "{run_id}", "{release_id}"],
+      "sha256": "実行ファイルのSHA256"
+    },
+    "rollback": {
+      "argv": ["/opt/teate-hooks/rollback", "{run_id}", "{release_id}"],
+      "sha256": "実行ファイルのSHA256"
+    }
   }
 }
 ```
 
-これは資産定義へ追加する部分設定の例です。対象に実在するテストへ置き換えてください。コマンドは最大5件、各1〜120秒、shell展開なしで実行します。Linuxではbubblewrap、macOSでは利用可能なsandbox-execを使い、ネットワークとホスト認証情報へのアクセスを制限します。sandboxの不足・利用拒否時は実行を止め、非sandbox実行へ切り替えません。依存インストールやネットワークを伴うテストは自動では行いません。候補に必要なツール・依存を用意する方法は操作者の検討事項です。
+グローバルの `policy.automation.enabled: true` と、`allowed_packages: ["対象パッケージ名"]` も必要です。
+既存の許可は移行時に拡大しません。公開後の待機時間は `minimum_release_age_hours`（省略時336時間）です。
+`verification.commands` は最大5件、各1–120秒。準備のnpm ciは明示時だけネットワークを使い、ライフサイクルスクリプトを無効にします。
+テストはネットワークなし・ホスト認証なしで実行します。必須のプロジェクトテストを省略しません。
 
-`discard_outputs`はテストが生成する既存のtrackedファイルを候補作成直後の内容へ戻すための明示リストです。依存manifestやlockfile、管理外パスには使えません。許可外の差分が残れば検証失敗です。`context_files`は例外調査に渡してよいコードだけを最大2ファイル選び、秘密情報や認証を含めません。ローカルテストが通っても、対象commitの必須GitHub CI・信頼bot・許可リスト・待機期間は代替しません。
+SHA256はMac/Linuxで次のように確認できます。
 
-非公開GitHubのassessment workflowは新しいcycleを使います。`TEATE_PREPARE_CANDIDATES=true`を明示すると候補作成まで進めます。GitHub ActionsへCodex認証を複製しません。公式情報の差分履歴とモデル試行記録は`control-state.json.gz`に保存し、永続化容量が不足した場合は履歴を破棄せず停止します。
+```bash
+python3 -c 'import hashlib,pathlib; print(hashlib.sha256(pathlib.Path("/opt/teate-hooks/deploy").read_bytes()).hexdigest())'
+```
 
-## ローカル修正候補の作成（v0.3）
+フックに共通する任意設定：`timeout_seconds`（1–600秒）、絶対パスの`cwd`、渡す既存環境変数名の`env_names`。
+秘密値は設定ファイルに書かず、必要最小限の既存認証を利用します。認証内容は台帳に保存しません。
+インタープリター経由の場合は、追加の`files: {"/opt/teate-hooks/deploy.py": "SHA256"}`でスクリプトも固定します。
+`argv`の実行ファイルは絶対パス必須。置換できるのは上記のトークンと`{head_sha}`だけで、シェル評価はありません。
+フックはプロジェクトのテストと異なり、運用者が承認した本番操作です。ソース・候補・台帳内のフックを登録しないでください。
 
-`repair prepare --finding ID --target VERSION`は、登録済み・同一ホスト・変更のないGit checkoutだけを扱います。入力は操作者が明示し、LLMの選択応答や勧告本文からこのコマンドを自動起動しません。最大5件、npm lockfile v3、同一major/minorの安定版patch、単純な末端依存が対象です。固定された依存指定、依存グラフ・ライセンス・実行条件の変更、install hook、symlink、未対応の指定はレビューへ回します。
+## フックのJSON契約
 
-まず元のソースをnpmで再検査し、指摘が現在も存在することを確認します。公式npmレジストリで指定版と配布情報を確認し、checkout hookを無効にした隔離worktreeでバージョン・URL・SHA512だけを更新します。依存関係をインストールせず、プロジェクトのscriptも実行しません。対象範囲の再検査が成功し、対象の指摘が消え、新しい指摘が増えていない候補だけを`candidate_ready`とします。Rust等の未検査範囲は`unverified_scopes`に残ります。
+標準出力は最大12KBのJSONオブジェクトだけ。生ログや秘密は出力しません。
+全応答に同じ`run_id`を含め、想定外のフィールドは拒否します。正常終了は終了コード0。
 
-候補のscanは中央台帳へ取り込まれません。元の指摘は`proposed`に進み、日次レポートは`review_prepared_candidate`を示します。`fixed_versions`、優先度、期限、解消状態を推測で書き換えません。結果は`.teate/repairs/JOB/result.json`、資産ごとの`baseline.json`、`registry.json`、`candidate.json`、`candidate.patch`です。途中で失敗した作業コピーも調査用に保持し、同じ呼び出し内で自動再試行しません。
+| フック | 必須の出力 |
+|---|---|
+| deploy | `status: "deployed"`、`run_id`、`candidate_id`、`release_id`、`previous_release_id` |
+| observe（読み取り専用） | `status: "success"`、`deployment: "applied"`、同じrun/candidate/release ID、`previous_release_id` |
+| health（読み取り専用） | `run_id`、対象`release_id`、`healthy: true`または`false` |
+| rollback | `run_id`、`status: "rolled_back"`、戻した`release_id` |
 
-終了コード0は候補作成がすべて成功、1はレビューに回った資産あり、2は入力や設定のエラーです。0でもテスト・マージ・デプロイ・解消は完了していません。プロジェクトテストとcommitを限定した必須CI、認証済みのPR作成、反映後の再検査は既存の接続経路で行います。候補作成の許可と自動マージの許可は独立しています。
+画像・Cloud Runへのdeploy/observeは、実際に配備した不変のダイジェスト配列 `runtime_digests` も返します。
+Cloud Runはトラフィック・タグで到達できる全リビジョンのイメージと一致する必要があります。
+ソース型runtime資産は、実際の稼働リリースであることをobserveが確認し、候補のlockfile集合・ハッシュと一致してから再検査します。
+本番資産は別IDで `assets` に登録してください。同じプロジェクトでもsourceとproductionの状態は別です。
 
-任意のCodexサブスク接続は[small-model.md](small-model.md)の`codex status`と`agent advise`を使います。認証情報をGitHub Actionsのsecretへ複製せず、まず既存のChatGPTログインを持つMac等で実行してください。
+observeは未反映を`deployment: "not_applied"`、判定不能を`"unknown"`として報告できます。
+タイムアウト・不正JSON・接続不能は未確認です。変更コマンドを再送しません。
+deployが`status: "failed"`を返して旧/新リリースを識別できる場合や、確認済み新リリースのhealthがfalseの場合はrollbackを1回だけ送ります。
+次回resumeでobserveが`deployment: "rolled_back"`かつ旧release ID、healthがtrueと確認できて初めて復旧確認です。脆弱性の解消にはしません。
+ソースへ修正版が戻っていなければ`runtime_verified_source_sync_still_required`として残します。
 
-## 最初の接続
+## GitHub経由
 
-1. 公開ソースとは別に、非公開の`OWNER/teate-ops`等へソースを配置します。GitHubのpublicリポジトリには台帳・レポート・receiptを送信できません。公開repo内の別ブランチも公開です。
-2. 非公開の運用リポジトリで`config/ci.example.json`を参考に`config/ci.json`へ実際の管理資産を登録します。配布時の管理対象は空です。sourceの`repository`は確認済みの`owner/name`だけを指定します。
-3. GitHub Actionsの`CI`を実行します。
-4. assessment用の専用認証を`TEATE_GITHUB_TOKEN`へ設定します。GitHub Appを使う場合は、そのAppの短命なinstallation tokenをworkflowで発行して渡してください。通常の`GITHUB_TOKEN`は当該リポジトリ用なので、別の非公開プロジェクトを読めません。設定不足のプロジェクトは未確認として残ります。
-5. 非公開の運用リポジトリで`TEATE_OPERATIONS_ENABLED=true`をリポジトリ変数へ設定します。その後`Teate assessment`を手動実行し、`teate-state`のreportとIssueを確認します。以後は07:10 JSTに日次起動します。GitHubのscheduleは遅延し得ます。公開リポジトリでは運用jobを起動しません。
+`mode: "github"`、`repository: "owner/repo"`、`base_branch: "main"`を登録します。
+`asset.repository`の登録先との一致、許可されたbase branch、`trusted_bots`に登録された実際の発行者、
+同じhead SHAの`required_checks`、パッケージ許可・待機期間・差分の条件をすべて満たしてからauto-mergeを要求します。
+Teateは検証済みlockfileだけのブランチ・PRをAPIで作成し、マージ・既存CI/CDの完了を観測します。
+PR本文は固定文で、台帳やスキャンの生データを公開しません。証跡/Issueを送る先は従来どおり非公開リポジトリ必須です。
 
-Macに設定する認証は中央Teateへの読み書きに限定します。修正botの認証をMacへ配布する必要はありません。クラウドの観測には各プロジェクトの読み取り権限を使い、更新・デプロイの権限とは分けます。
+このモードは既存CI/CDのdeployを使うため`deploy`フック不要ですが、observe/health/rollbackとruntime登録は必要です。
+CI/CDはrun ID（ブランチ`teate/repair-RUN_ID`）とcandidate IDを観測可能なリリース情報へ結び付けてください。
+候補のファイル集合を同じ正規化SHA256で表すcandidate IDは`history --run ID --format json`に保存した`record.candidate_files`から計算できます。
+変更結果が不明なPR作成は同名ブランチ・内容・PRを読み取り照合します。不完全な作成はレビュー待ちで、推測して再作成しません。
+実行は候補ディレクトリーとSQLiteを保持するワーカーで行ってください。毎回消えるCIワーカーへの候補コピーや認証の永続化は行いません。
 
-## 修正PRと自動マージ
+## 状態と履歴
 
-1. 専用の更新botに、登録済みリポジトリのContents/Pull requests/Checksの必要権限を設定し、`TEATE_RENOVATE_TOKEN`で渡します。
-2. 非公開の運用リポジトリで`TEATE_OPERATIONS_ENABLED=true`と`TEATE_RENOVATE_ENABLED=true`をリポジトリ変数へ設定します。
-3. 初回にRenovateが作る設定PRを確認・反映します。Teateは登録済みリポジトリだけを処理します。
-4. `policy.json`の`trusted_bots`を実際のbotログインに合わせます。ユーザー個人のログインを安易にbot扱いしません。
-5. `allowed_packages`へ自動化するパッケージを列挙し、`required_checks`へ実際のテストjob名を設定します。各対象repoで、必須status checkを含むbranch rulesを設定します。
-6. `Teate remediation`が07:40 JSTにRenovateを実行し、更新PRを判定します。承認済みの条件を満たすpatchのみauto-mergeを要求します。PRのテストがまだ完了していなければ次の実行で再判定します。
+```bash
+python3 -m teate agent cycle --scanner npm-audit --execute
+python3 -m teate agent render
+python3 -m teate history --run RUN_ID --format json
+python3 -m teate agent resume --run RUN_ID
+```
 
-緊急対応は優先順位を上げます。通常の自動マージに必要なテストや対象確認を緊急扱いで省略しません。実際の悪用や悪意あるパッケージには、隔離・証跡保全・認証情報への影響調査が必要になるため、単純なバージョン更新で完了にしません。
+`blocked`は設定・テスト・接続待ち、`awaiting_deployment`は反映設定待ち、`awaiting_ci`はCI/マージ待ち、
+`verification_pending`は実環境確認待ち、`uncertain`は変更結果不明、`stale`は再作成が必要、
+`rolled_back`は復旧確認済み・脆弱性未解消、`verified`は稼働先と元ソースの再検査完了です。
 
-## クラウド稼働版
+SQLiteのrun/stepは操作直前のintentと結果を保存し、同じ資産の同時実行を防ぎます。
+同じrunを再開すれば、終了したデプロイ/マージ/rollbackを繰り返しません。
+操作履歴のないrunで、選択した指摘すべてが新しい完全な同一範囲の検査で解消済みなら、
+そのrunを`stale`として終了します。Teateが反映したことや稼働先の解消を示す`verified`にはしません。
+操作intentがあるrun、検査失敗・古い検査・指摘IDの欠落はこの終了処理の対象外です。
+候補作成そのものが未完了のrunは、resumeしても候補を再作成しません。
+表示された前提を解決してから次のagent cycleで新しい候補を作成してください。
+ソース・候補・設定が変わった場合は候補を再評価し、未確認の変更操作は自動再送しません。
+コード生成例外のreview patchは自動適用に取り込みません。
 
-`cloud-run`資産をcollectorが実行できる環境の設定へ追加します。`gcloud`のidentityは既存のSDK/CLI設定を利用し、Teateはログイン・権限変更を実行しません。
+v0.4からは初回起動時に`ledger.sqlite3.pre-v05`を作ってテーブルを追加し、既存ID・履歴・例外・期限を維持します。
+過去の候補は証跡として残りますが、v0.5の差分・テスト・設定条件を満たすまで適用しません。
+日次処理は最大5件ずつ扱い、最上位候補を維持しながら残りを巡回して、先頭の保留案件による滞留を防ぎます。
 
-collectorはCloud Run Serviceと全到達可能revisionをGETし、Readyとimmutable image digestを確認します。Trivyで全digestを検査できた結果だけを、対応完了の証拠にできます。Cloud Runの管理対象外のサービスやVMは、v0.1では別collectorの追加が必要です。
+## 開発時の検証
 
-Cloud Runにデプロイ済みのイメージは作業用checkoutの状態とは独立して評価します。CIで修正しても本番へ反映されていなければ、sourceとproductionで状態が異なるまま残ります。ロールバックで脆弱なイメージに戻った場合、再検査で再オープンします。
+```bash
+python3 -m pip install -e .
+python3 -m unittest discover -s tests -v
+python3 -m compileall -q teate scripts
+ruff check teate scripts tests
+```
 
-## 通信先
-
-- OSV-Scanner: OSV API、必要に応じて公式データ配信先。到達不能なら未確認とします。
-- npm補助検査: `registry.npmjs.org`。`npm audit --package-lock-only --ignore-scripts`を実行し、依存パッケージをインストールしません。
-- KEV: `raw.githubusercontent.com/cisagov/kev-data`。照合元の取得日時と公開日時を証跡へ保存します。
-- GitHub: API、登録済みrepo、公式scannerのrelease。
-- Trivy: 脆弱性DB配信元と設定したイメージレジストリ。
-- Cloud Run: 設定済みGCP API。
-
-接続できない通信先に対し、プロキシを外すなどの回避は行いません。許可されたネットワーク設定で接続するか、結果を未確認として扱います。
-
-## 対応記録の運用
-
-同じ指摘を再処理しても同じIssueを使います。scanは内容ハッシュで重複排除します。判定は資産・scanner・scopeごとに直列化します。観測時刻が古いreceiptは保存しますが、現在の状態を上書きしません。
-
-JSON scanner結果を手動変換するときは、元の検査時刻を`normalize --observed-at`へ指定します。今日取り込んだという理由で、過去の検査を新しい検査として扱わないでください。
-
-SQLiteとreceiptはprivateなデータです。ソースの公開ブランチや公開レポートへ配置しないでください。Teateはソースコードや秘密情報の値をreceiptへ収集しません。
+実際のsandbox-runtimeを使う隔離テストは`TEATE_SANDBOX_INTEGRATION=1`で有効化します。
+隔離を起動できないホストでは保留し、安全設定を弱めて通しません。

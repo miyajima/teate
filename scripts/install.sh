@@ -12,8 +12,8 @@ for arg in "$@"; do
     --dry-run) teate_dry=true ;;
     --help|-h)
       echo 'Usage: bash scripts/install.sh [--all] [--dry-run]'
-      echo 'Default: Python 3.11+, Git, OSV-Scanner.'
-      echo '--all: also Node/npm, Trivy, gh, gcloud, Codex, Linux bubblewrap.'
+      echo 'Default: Python 3.11+, Git, mise, OSV, Node/npm, sandbox-runtime.'
+      echo '--all: also Node/npm, Trivy, gh, gcloud, Codex. Linux: bubblewrap and socat.'
       exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 2 ;;
   esac
@@ -53,7 +53,7 @@ if [[ "$teate_system" == Darwin ]]; then
     else teate_brew=/usr/local/bin/brew; fi
   fi
   if ! "$teate_dry"; then eval "$("$teate_brew" shellenv)"; fi
-  step "$teate_brew" install python@3.13 git
+  step "$teate_brew" install python@3.13 git ripgrep
   teate_python="$(dirname "$teate_brew")/python3.13"
 elif [[ "$teate_system" == Linux ]]; then
   teate_sudo=()
@@ -66,12 +66,12 @@ elif [[ "$teate_system" == Linux ]]; then
   fi
   if command -v apt-get >/dev/null; then
     step "${teate_sudo[@]}" apt-get update
-    teate_packages=(python3 git ca-certificates)
-    if "$teate_all"; then teate_packages+=(bubblewrap); fi
+    teate_packages=(python3 python3-venv git ca-certificates bubblewrap socat ripgrep)
+
     step "${teate_sudo[@]}" apt-get install -y "${teate_packages[@]}"
   elif command -v dnf >/dev/null; then
-    teate_packages=(python3 git ca-certificates)
-    if "$teate_all"; then teate_packages+=(bubblewrap); fi
+    teate_packages=(python3 git ca-certificates bubblewrap socat ripgrep)
+
     step "${teate_sudo[@]}" dnf install -y "${teate_packages[@]}"
   else
     echo 'Automatic bootstrap supports apt-get / dnf. With Python 3.11+ and Git installed, use scripts/install_dependencies.py.' >&2

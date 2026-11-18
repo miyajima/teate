@@ -4,7 +4,6 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import PurePosixPath
 
-
 PRIORITY = {"urgent": 0, "high": 1, "normal": 2}
 ACTION_TEXT = {
     "prepare_update_pr": "依存定義とlockを整合させて修正版へ更新し、テスト後に対象を再検査する。",

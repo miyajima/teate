@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "teate-security"
-version = "0.4.0"
+version = "0.5.0"
 description = "Vulnerability remediation from discovery to verified deployment"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["feedparser==6.0.14"]
 
 [project.urls]
 Repository = "https://github.com/miyajima/teate"

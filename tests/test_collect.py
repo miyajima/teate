@@ -28,8 +28,7 @@ class AdapterTests(unittest.TestCase):
             root = Path(folder)
             (root / "go.mod").write_text("module example.test/app\nrequire example.test/lib v1.0.0\n")
             (root / "go.sum").write_text("checksum fixture\n")
-            run.side_effect = [subprocess.CompletedProcess([], 0, "abc", ""),
-                               result({"results": []})]
+            run.return_value = result({"results": []})
             scan = scan_source({"id": "app", "path": str(root)})[0]
             self.assertTrue(scan["complete"])
             inputs = [a for a in run.call_args.args[0] if a.startswith("--lockfile=")]
@@ -42,11 +41,10 @@ class AdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "go.sum").write_text("checksum fixture\n")
-            run.return_value = subprocess.CompletedProcess([], 0, "abc", "")
             scan = scan_source({"id": "app", "path": str(root)})[0]
             self.assertFalse(scan["complete"])
             self.assertIn("go.mod", scan["message"])
-            self.assertEqual(run.call_count, 1)
+            run.assert_not_called()
 
     @patch("teate.collect.shutil.which", return_value="osv-scanner")
     @patch("teate.collect.run")
@@ -54,9 +52,10 @@ class AdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "Cargo.lock").write_text("")
-            run.side_effect = [subprocess.CompletedProcess([], 0, "abc", ""),
-                               subprocess.CompletedProcess([], 127, "",
-                                   f'private-token-value\ncould not determine extractor suitable to this file: "{root.resolve()}/Cargo.lock"\n')]
+            run.return_value = subprocess.CompletedProcess(
+                [], 127, "",
+                f'private-token-value\ncould not determine extractor suitable to this file: "{root.resolve()}/Cargo.lock"\n',
+            )
             scan = scan_source({"id": "app", "path": str(root)})[0]
             self.assertFalse(scan["complete"])
             self.assertIn("Cargo.lock", scan["message"])

@@ -28,3 +28,4 @@ config/private*.json
 *.zip
 *.tar.gz
 *.log
+node_modules/

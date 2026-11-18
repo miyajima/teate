@@ -1,5 +1,5 @@
-import json
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -8,8 +8,8 @@ from pathlib import Path
 from teate.agent import MAX_BRIEF_BYTES, brief, render
 from teate.cli import main
 from teate.model import snapshot
-from teate.report import markdown, summary
 from teate.projects import overview
+from teate.report import markdown, summary
 from teate.store import Ledger
 
 

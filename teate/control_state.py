@@ -9,12 +9,12 @@ from pathlib import Path
 
 from .model import TeateError, canonical
 
-ALLOWED = re.compile(r"(?:intel/(?:jpcert|jvn|nodejs|summary)\.json|intel/events/[a-f0-9]{64}\.json|autopilot/result\.json|autopilot/investigations/[a-f0-9]{64}/attempt\.json)")
+ALLOWED = re.compile(r"(?:intel/(?:jpcert|jvn|nodejs|summary)\.json|intel/events/[a-f0-9]{64}\.json|autopilot/(?:result|queue)\.json|autopilot/investigations/[a-f0-9]{64}/attempt\.json)")
 
 
 def export(state: Path) -> bytes:
     files = {}
-    candidates = [*(state/"intel").glob("*.json"), state/"autopilot/result.json",
+    candidates = [*(state/"intel").glob("*.json"), state/"autopilot/result.json", state/"autopilot/queue.json",
                   *(state/"intel/events").glob("*.json"),
                   *(state/"autopilot/investigations").glob("*/attempt.json")]
     for path in candidates:

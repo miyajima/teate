@@ -1,0 +1,86 @@
+[
+  {
+    "bundle": "runtime",
+    "package": "node_modules/@anthropic-ai/sandbox-runtime",
+    "version": "0.0.81",
+    "declared_license": "Apache-2.0",
+    "selected_license": "Apache-2.0"
+  },
+  {
+    "bundle": "runtime",
+    "package": "node_modules/@pondwader/socks5-server",
+    "version": "1.0.10",
+    "declared_license": "MIT",
+    "selected_license": "MIT"
+  },
+  {
+    "bundle": "runtime",
+    "package": "node_modules/commander",
+    "version": "12.1.0",
+    "declared_license": "MIT",
+    "selected_license": "MIT"
+  },
+  {
+    "bundle": "runtime",
+    "package": "node_modules/node-forge",
+    "version": "1.4.1",
+    "declared_license": "(BSD-3-Clause OR GPL-2.0)",
+    "selected_license": "BSD-3-Clause"
+  },
+  {
+    "bundle": "runtime",
+    "package": "node_modules/zod",
+    "version": "4.6.6",
+    "declared_license": "MIT",
+    "selected_license": "MIT"
+  },
+  {
+    "bundle": "codex",
+    "package": "node_modules/@openai/codex",
+    "version": "0.159.2",
+    "declared_license": "Apache-2.0",
+    "selected_license": "Apache-2.0"
+  },
+  {
+    "bundle": "codex",
+    "package": "node_modules/@openai/codex-darwin-arm64",
+    "version": "0.159.2-darwin-arm64",
+    "declared_license": "Apache-2.0",
+    "selected_license": "Apache-2.0"
+  },
+  {
+    "bundle": "codex",
+    "package": "node_modules/@openai/codex-darwin-x64",
+    "version": "0.159.2-darwin-x64",
+    "declared_license": "Apache-2.0",
+    "selected_license": "Apache-2.0"
+  },
+  {
+    "bundle": "codex",
+    "package": "node_modules/@openai/codex-linux-arm64",
+    "version": "0.159.2-linux-arm64",
+    "declared_license": "Apache-2.0",
+    "selected_license": "Apache-2.0"
+  },
+  {
+    "bundle": "codex",
+    "package": "node_modules/@openai/codex-linux-x64",
+    "version": "0.159.2-linux-x64",
+    "declared_license": "Apache-2.0",
+    "selected_license": "Apache-2.0"
+  },
+  {
+    "bundle": "codex",
+    "package": "node_modules/@openai/codex-win32-arm64",
+    "version": "0.159.2-win32-arm64",
+    "declared_license": "Apache-2.0",
+    "selected_license": "Apache-2.0"
+  },
+  {
+    "bundle": "codex",
+    "package": "node_modules/@openai/codex-win32-x64",
+    "version": "0.159.2-win32-x64",
+    "declared_license": "Apache-2.0",
+    "selected_license": "Apache-2.0"
+  }
+]

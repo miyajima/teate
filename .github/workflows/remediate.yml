@@ -22,28 +22,12 @@ concurrency:
   group: teate-remediation
   cancel-in-progress: false
 jobs:
-  renovate:
-    if: github.event.repository.private == true && vars.TEATE_OPERATIONS_ENABLED == 'true' && vars.TEATE_RENOVATE_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.12'
-      - run: python scripts/renovate_config.py
-      - uses: renovatebot/github-action@a63d9a7bc606f7336fd20b47f2f32259a35e6213 # v46.3.9
-        with:
-          configurationFile: .teate/renovate.json
-          token: ${{ secrets.TEATE_RENOVATE_TOKEN }}
   patch-gate:
     if: github.event.repository.private == true && vars.TEATE_OPERATIONS_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && inputs.repository != '' && inputs.pr > 0
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      GH_TOKEN: ${{ secrets.TEATE_RENOVATE_TOKEN }}
+      GH_TOKEN: ${{ secrets.TEATE_GITHUB_TOKEN }}
       TEATE_TARGET_REPOSITORY: ${{ inputs.repository }}
       TEATE_PR_NUMBER: ${{ inputs.pr }}
       TEATE_APPLY: ${{ inputs.apply }}
@@ -54,6 +38,7 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
+      - run: python -m pip install -e .
       - name: Evaluate registered dependency update
         run: |
           python - <<'PY'
@@ -71,23 +56,3 @@ jobs:
               command.append('--apply')
           subprocess.run(command, check=True)
           PY
-  automatic-patch-gates:
-    needs: renovate
-    if: github.event.repository.private == true && vars.TEATE_OPERATIONS_ENABLED == 'true' && vars.TEATE_RENOVATE_ENABLED == 'true' && success()
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      GH_TOKEN: ${{ secrets.TEATE_RENOVATE_TOKEN }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: '3.12'
-      - run: python scripts/process_updates.py --apply
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: teate-update-decisions
-          path: .teate/update-decisions.json

@@ -25,6 +25,7 @@ class AutopilotTests(unittest.TestCase):
     def execute(self):
         with (patch("teate.autopilot.intel.advisory", return_value=self.upstream),
               patch("teate.repair.registry", return_value=self.f.metadata),
+              patch("teate.repair.backend", side_effect=self.f.backend),
               patch("teate.repair.scan_source", side_effect=self.f.scan),
               patch("teate.autopilot.scan_source", side_effect=self.f.scan)):
             return run(self.f.ledger, self.f.policy, self.state, prepare=True)

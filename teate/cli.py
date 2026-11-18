@@ -110,11 +110,19 @@ def parser() -> argparse.ArgumentParser:
         "evaluate-update", help="evaluate an update fixture without network or mutation"
     )
     decision.add_argument("input", type=Path)
-    repair = commands.add_parser("repair", help="prepare isolated candidates; never merge live code")
+    repair = commands.add_parser("repair", help="prepare or apply policy-bound repair jobs")
     repair_actions = repair.add_subparsers(dest="repair_action", required=True)
     prepare = repair_actions.add_parser("prepare")
     prepare.add_argument("--finding", action="append", required=True)
     prepare.add_argument("--target", required=True)
+    prepare.add_argument("--scanner", choices=["osv", "npm-audit"], default="npm-audit")
+    apply = repair_actions.add_parser("apply")
+    apply.add_argument("--job", required=True)
+    history = commands.add_parser("history")
+    selection = history.add_mutually_exclusive_group()
+    selection.add_argument("--run")
+    selection.add_argument("--asset")
+    history.add_argument("--format", choices=["text", "json"], default="text")
     codex = commands.add_parser("codex", help="inspect subscription-only Codex readiness")
     codex.add_argument("action", choices=["status"])
     agent_cli = commands.add_parser("agent", help="bounded interface for a small-model caller")
@@ -125,6 +133,9 @@ def parser() -> argparse.ArgumentParser:
     cycle.add_argument("--publish")
     cycle.add_argument("--sync-issues")
     cycle.add_argument("--prepare", action="store_true", help="prepare supported candidates in isolation")
+    cycle.add_argument("--execute", action="store_true", help="execute explicitly authorized assets through runtime verification")
+    resume = agent_actions.add_parser("resume")
+    resume.add_argument("--run", required=True)
     cycle.add_argument("--llm", choices=["none", "codex"], default="none")
     cycle.add_argument("--model")
     cycle.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"])
@@ -316,6 +327,7 @@ def execute(args) -> int:
                 if (
                     platform.system() == "Darwin"
                     and policy.get("mac", {}).get("automatic_formula_updates") is True
+                    and (agent_mode != "cycle" or args.execute)
                 ):
                     from .mac import in_window, upgrade_formula
 
@@ -386,7 +398,14 @@ def execute(args) -> int:
                     if cycle_info["feed_status"] == "error":
                         exit_code = max(exit_code, 1)
                     intelligence = refresh_intel(state)
-                    workflow = autopilot(ledger, policy, state, prepare=args.prepare, catalog=catalog)
+                    workflow = autopilot(ledger, policy, state, prepare=args.prepare or args.execute, catalog=catalog, scanner=args.scanner)
+                    if args.execute:
+                        from .execution import cycle as execute_cycle
+                        execution_runs = execute_cycle(ledger, policy, state, workflow)
+                        if any(r["status"] != "verified" for r in execution_runs):
+                            exit_code = max(exit_code, 1)
+                        cycle_info["execution"] = execution_runs[:5]
+                        cycle_info["execution_omitted"] = max(0, len(execution_runs)-5)
                     investigation = dispatch(ledger, policy, state, workflow["decisions"],
                                              enabled=args.llm == "codex", model=args.model, effort=args.effort)
                     workflow["counts"]["llm_calls"] = investigation["llm_calls"]
@@ -505,13 +524,35 @@ def execute(args) -> int:
             result = status()
             output(result)
             return 0 if result["ready"] else 1
+        elif args.command == "history":
+            from .jobs import Jobs
+            runs = Jobs(ledger).history(identifier=args.run, asset_id=args.asset)
+            if args.format == "json":
+                output(runs)
+            else:
+                for run in runs:
+                    print(f"{run['id']} | {run['asset_id']} | {run['status']} | {run.get('reason', '')}")
+                    print(run.get("next_action", ""))
         elif args.command == "repair":
-            from .repair import prepare
-
-            result = prepare(ledger, policy, state, args.finding, args.target)
-            output(result)
-            return int(any(r["status"] != "candidate_ready" for r in result["results"]))
+            if args.repair_action == "prepare":
+                from .repair import prepare
+                result = prepare(ledger, policy, state, args.finding, args.target, scanner=args.scanner)
+                output(result)
+                return int(any(r["status"] != "candidate_ready" for r in result["results"]))
+            from .execution import execute as execute_repair
+            from .jobs import Jobs, load_candidate
+            result = load_candidate(state, args.job)
+            runs = [execute_repair(ledger, policy, state, Jobs(ledger).create(r["asset_id"], r)["id"])
+                    for r in result["results"] if r["status"] == "candidate_ready"]
+            output(runs)
+            return int(not runs or any(r["status"] != "verified" for r in runs))
         elif args.command == "agent":
+            if args.agent_action == "resume":
+                from .execution import execute as execute_repair
+                result = execute_repair(ledger, policy, state, args.run)
+                output(result)
+                return int(result["status"] != "verified")
+
             from .agent import MAX_RESPONSE_BYTES, brief, render
 
             brief_path = state / "agent" / "brief.json"
