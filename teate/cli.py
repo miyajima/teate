@@ -581,7 +581,8 @@ def execute(args) -> int:
                             response_text = file.read(MAX_RESPONSE_BYTES + 1)
                     except (OSError, UnicodeError):
                         response_text = ""  # Invalid input takes the model-free path.
-                rendered = render(current, original=original, response_text=response_text)
+                rendered = render(current, original=original, response_text=response_text,
+                                  projects=summary(ledger, policy)["projects"])
                 if transport is not None:
                     rendered["codex"] = transport
                 write_json(state / "agent" / "report.json", rendered)

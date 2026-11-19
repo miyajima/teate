@@ -21,6 +21,47 @@ def result(value, returncode=0):
 
 
 class AdapterTests(unittest.TestCase):
+    @patch("teate.collect.shutil.which", return_value="osv-scanner")
+    @patch("teate.collect.run")
+    def test_go_module_is_scanned_instead_of_go_sum_and_both_are_fingerprinted(self, run, _):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "go.mod").write_text("module example.test/app\nrequire example.test/lib v1.0.0\n")
+            (root / "go.sum").write_text("checksum fixture\n")
+            run.return_value = result({"results": []})
+            scan = scan_source({"id": "app", "path": str(root)})[0]
+            self.assertTrue(scan["complete"])
+            inputs = [a for a in run.call_args.args[0] if a.startswith("--lockfile=")]
+            self.assertEqual(inputs, [f"--lockfile={root.resolve()}/go.mod"])
+            self.assertEqual(set(scan["subject"]["lockfile_hashes"]), {"go.mod", "go.sum"})
+
+    @patch("teate.collect.shutil.which", return_value="osv-scanner")
+    @patch("teate.collect.run")
+    def test_go_sum_without_a_module_is_a_specific_gap_not_a_clean_scan(self, run, _):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "go.sum").write_text("checksum fixture\n")
+            scan = scan_source({"id": "app", "path": str(root)})[0]
+            self.assertFalse(scan["complete"])
+            self.assertIn("go.mod", scan["message"])
+            run.assert_not_called()
+
+    @patch("teate.collect.shutil.which", return_value="osv-scanner")
+    @patch("teate.collect.run")
+    def test_parser_diagnostics_only_expose_the_known_input_not_raw_stderr(self, run, _):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "Cargo.lock").write_text("")
+            run.return_value = subprocess.CompletedProcess(
+                [], 127, "",
+                f'private-token-value\ncould not determine extractor suitable to this file: "{root.resolve()}/Cargo.lock"\n',
+            )
+            scan = scan_source({"id": "app", "path": str(root)})[0]
+            self.assertFalse(scan["complete"])
+            self.assertIn("Cargo.lock", scan["message"])
+            self.assertNotIn("private-token-value", scan["message"])
+            self.assertNotIn(str(root), scan["message"])
+
     def test_invalid_empty_outputs_are_not_clean_scans(self):
         for adapter in (osv_findings, trivy_findings):
             with self.assertRaises(TeateError):
