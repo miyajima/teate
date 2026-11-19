@@ -432,8 +432,13 @@ def execute(args) -> int:
                     write_json(state / "summary.json", data)
                     (state / "report.md").write_text(markdown(data))
                     cycle_info["exit_code"] = exit_code
-                    packet = brief(ledger, policy, cycle=cycle_info)
-                    write_json(state / "agent" / "brief.json", packet)
+                    from .cycle_status import changes
+
+                    with ledger.db:
+                        ledger.db.execute("BEGIN IMMEDIATE")
+                        cycle_info["changes"] = changes(ledger)
+                        packet = brief(ledger, policy, cycle=cycle_info)
+                        write_json(state / "agent" / "brief.json", packet)
                     output(packet)
                 else:
                     output(
@@ -556,13 +561,18 @@ def execute(args) -> int:
             from .agent import MAX_RESPONSE_BYTES, brief, render
 
             brief_path = state / "agent" / "brief.json"
+            try:
+                original = load_json(brief_path) if brief_path.exists() else None
+            except TeateError:
+                if agent_mode != "brief":
+                    raise
+                original = None
+            cycle = original.get("cycle") if isinstance(original, dict) else None
             if agent_mode == "brief":
-                packet = brief(ledger, policy)
+                packet = brief(ledger, policy, cycle=cycle)
                 write_json(brief_path, packet)
                 output(packet)
             else:
-                original = load_json(brief_path) if brief_path.exists() else None
-                cycle = original.get("cycle") if isinstance(original, dict) else None
                 current = brief(ledger, policy, cycle=cycle)
                 response_text = None
                 transport = None

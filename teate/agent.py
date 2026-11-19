@@ -155,6 +155,10 @@ def _brief(ledger, policy: dict, *, cycle: dict | None = None) -> dict:
             },
         },
     }
+    if cycle and "changes" in cycle:
+        result["facts"]["changes"] = cycle["changes"]
+        if cycle["changes"].get("missing"):
+            result["facts"]["requires_review"] = True
     if runs:
         result["execution"] = [{k:clip(v, 100) if isinstance(v, str) else v for k,v in r.items()
                                 if k in {"id", "asset_id", "status", "phase", "reason", "next_action"}} for r in runs[:5]]
@@ -249,6 +253,19 @@ def render(
             f"期限超過 {facts['overdue']} / 解消確認 {facts['resolved']}"
         ),
     ]
+    changes = facts.get("changes")
+    if changes:
+        if changes["status"] == "compared":
+            lines.append(
+                f"前回cycle比: 新規 {changes['new']} / 継続 {changes['continuing']} / "
+                f"解消確認 {changes['resolved_new']}"
+            )
+            if changes["resolved_new"]:
+                lines.append("解消確認は台帳の再検査結果です。修復・配備・稼働先の確認は実行履歴と対象環境の証跡で確認してください。")
+            if changes["missing"]:
+                lines.append(f"前回の指摘 {changes['missing']}件を照合できません。解消には数えません。")
+        else:
+            lines.append("前回cycle比: 比較基準がないため未確認です。今回の全指摘を次回の基準に保存しました。")
     if facts["urgent"]:
         lines.append(f"緊急対応候補: {facts['urgent']}件")
     if facts["assets"] == 0:
