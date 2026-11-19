@@ -50,5 +50,9 @@ print(json.dumps(result))
                 )
             self.assertEqual(result["status"], "passed", result)
             evidence = json.loads(result["excerpt"].splitlines()[-1])
-            self.assertEqual(evidence, {"secret": "denied", "write": "denied", "network": "denied"})
+            self.assertEqual(
+                evidence,
+                {"secret": "denied", "write": "denied", "network": "denied"},
+                f"host_forbidden_path_exists={forbidden.exists()}",
+            )
             self.assertFalse(forbidden.exists())
