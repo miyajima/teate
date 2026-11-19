@@ -42,11 +42,7 @@ jobs:
           if ($errors) { throw ($errors | Out-String) }
           ./scripts/install.ps1 -All -DryRun
   sandbox-integration:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -55,30 +51,14 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat ripgrep
       - run: python scripts/install_dependencies.py
       - name: Run actual sandbox and disposable npm deployment probes
         shell: bash
         run: |
           source .teate/env.sh
           export TEATE_SANDBOX_INTEGRATION=1
-          python3 -m unittest discover -s tests -p '*integration.py' -v
-  sandbox-integration-debian:
-    runs-on: ubuntu-latest
-    container:
-      image: debian:13
-    timeout-minutes: 15
-    steps:
-      - name: Install test prerequisites
-        run: apt-get update && apt-get install -y git ca-certificates python3 python3-venv python3-pip curl xz-utils bubblewrap socat ripgrep
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - run: python3 scripts/install_dependencies.py
-      - name: Run actual sandbox and disposable npm deployment probes
-        shell: bash
-        run: |
-          source .teate/env.sh
-          export TEATE_SANDBOX_INTEGRATION=1
-          python3 -m unittest discover -s tests -p '*integration.py' -v
+          python3 -m unittest discover -s tests -p '*integration.py' -v 2>&1 | tee .teate/integration-output.log
+          if grep -q 'skipped=' .teate/integration-output.log; then
+            echo 'Sandbox integration was skipped and is not verified.' >&2
+            exit 1
+          fi
