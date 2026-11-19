@@ -561,13 +561,18 @@ def execute(args) -> int:
             from .agent import MAX_RESPONSE_BYTES, brief, render
 
             brief_path = state / "agent" / "brief.json"
+            try:
+                original = load_json(brief_path) if brief_path.exists() else None
+            except TeateError:
+                if agent_mode != "brief":
+                    raise
+                original = None
+            cycle = original.get("cycle") if isinstance(original, dict) else None
             if agent_mode == "brief":
-                packet = brief(ledger, policy)
+                packet = brief(ledger, policy, cycle=cycle)
                 write_json(brief_path, packet)
                 output(packet)
             else:
-                original = load_json(brief_path) if brief_path.exists() else None
-                cycle = original.get("cycle") if isinstance(original, dict) else None
                 current = brief(ledger, policy, cycle=cycle)
                 response_text = None
                 transport = None

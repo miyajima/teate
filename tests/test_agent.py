@@ -223,6 +223,14 @@ class AgentCLITests(unittest.TestCase):
             code = main(["--config", str(self.config), "agent", *arguments])
         return code, json.loads(output.getvalue())
 
+    def test_brief_recovers_from_corrupt_previous_packet(self):
+        path = self.root / "state" / "agent" / "brief.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("not json")
+        code, packet = self.call("brief")
+        self.assertEqual(code, 0)
+        self.assertIn("facts", packet)
+
     @patch("teate.cli.fetch_kev", side_effect=TeateError("unavailable"))
     def test_cycle_returns_one_packet_and_preserves_unknowns_on_network_failure(self, feed):
         code, packet = self.call("cycle", "--scanner", "npm-audit")
@@ -239,6 +247,10 @@ class AgentCLITests(unittest.TestCase):
         _, second = self.call("cycle", "--scanner", "npm-audit")
         self.assertEqual(second["facts"]["changes"]["status"], "compared")
         self.assertEqual(second["facts"]["changes"]["new"], 0)
+        _, report = self.call("render", "--format", "json")
+        self.assertEqual(report["facts"]["changes"], second["facts"]["changes"])
+        _, status = self.call("brief")
+        self.assertEqual(status["facts"]["changes"], second["facts"]["changes"])
         _, report = self.call("render", "--format", "json")
         self.assertEqual(report["facts"]["changes"], second["facts"]["changes"])
 
