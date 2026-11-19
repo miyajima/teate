@@ -10,7 +10,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from .model import TeateError, digest, timestamp, utcnow
-from .report import summary
+from .report import project_lines, summary
 
 MODEL_PROFILE = {"preferred": "luna/max", "selection": "caller", "model_call_required": False}
 MAX_ITEMS = 5
@@ -118,6 +118,15 @@ def _brief(ledger, policy: dict, *, cycle: dict | None = None) -> dict:
         "caller_profile": MODEL_PROFILE,
         "facts": {**data["counts"], "urgent": urgent, "requires_review": review},
         "items": items,
+        "project_actions": [
+            {"asset_id": p["asset_id"], "project": clip(p["project"], 60),
+             "environment": clip(p["environment"], 50), "scan_status": p["scan_status"],
+             "open_count": p["open_count"], "known_open_count": p["known_open_count"],
+             "next_action": p["next_action"], "next_step": clip(p["next_step"], 180),
+             "files": [clip(f, 100) for f in p["files"][:2]], "task_count": p["task_count"]}
+            for p in data["projects"][:3]
+        ],
+        "omitted_projects": max(0, len(data["projects"]) - 3),
         "omitted": {
             "findings": max(0, len(unresolved) - min(len(unresolved), MAX_ITEMS)),
             "coverage_gaps": max(0, len(gaps) - min(len(gaps), 2)),
@@ -216,7 +225,8 @@ def validate_response(response: dict, original: dict, current: dict) -> list[str
 
 
 def render(
-    current: dict, *, original: dict | None = None, response_text: str | None = None
+    current: dict, *, original: dict | None = None, response_text: str | None = None,
+    projects: list[dict] | None = None,
 ) -> dict:
     selected, fallback = [], "no_model_response"
     if response_text is not None:
@@ -262,6 +272,13 @@ def render(
         lines.append("資産が登録されていません。対象環境の棚卸しが必要です。")
     if facts["unchecked_assets"]:
         lines.append("未確認の資産があり、環境全体の安全性は判定できていません。")
+    bounded_projects = projects is None
+    if bounded_projects:
+        projects = current.get("project_actions")
+    if projects is not None:
+        lines.extend(["", *project_lines(projects), "## 優先して確認する指摘", ""])
+        if bounded_projects and current.get("omitted_projects"):
+            lines.append(f"その他{current['omitted_projects']}資産の作業は完全なreportまたはCLIのagent renderで確認してください。")
     for identifier in order:
         item = by_id[identifier]
         label = item["project"] + " / " + item["environment"]

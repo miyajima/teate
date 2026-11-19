@@ -180,7 +180,7 @@ print(json.dumps(result))
                 "Official audit no longer reports the pinned fixture; replace the fixture explicitly",
             )
             result = prepare(
-                with_ledger, policy, root / "state", [f["id"] for f in findings], "1.2.2"
+                with_ledger, policy, root / "state", [f["id"] for f in findings], "1.2.3"
             )
             record = result["results"][0]
             self.assertEqual(record["status"], "candidate_ready", record)

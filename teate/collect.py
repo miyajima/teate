@@ -20,6 +20,7 @@ LOCKFILES = {
     "Cargo.lock",
     "Gemfile.lock",
     "go.sum",
+    "go.mod",
     "poetry.lock",
     "uv.lock",
     "Pipfile.lock",
@@ -288,6 +289,14 @@ def scan_source(asset: dict, *, scanner: str = "osv") -> list[dict]:
                 )
             ]
         try:
+            # OSV v2 extracts Go dependencies from go.mod, not go.sum. Keep
+            # both files in source identity so checksum changes invalidate scans.
+            for lock in locks:
+                if Path(lock).name == "go.sum":
+                    module = str(Path(lock).with_name("go.mod"))
+                    if module not in locks:
+                        raise TeateError(f"Go module input missing: {module}; go.sum cannot be scanned directly")
+            inputs = [lock for lock in locks if Path(lock).name != "go.sum"]
             # Use central policy rather than project-local suppressions. Reachability
             # analysis and dependency resolution can execute project build scripts.
             with tempfile.TemporaryDirectory(prefix="teate-osv-") as temporary:
@@ -301,14 +310,20 @@ def scan_source(asset: dict, *, scanner: str = "osv") -> list[dict]:
                     "--no-call-analysis=all",
                     "--no-resolve",
                     f"--config={scanner_config}",
-                    *[f"--lockfile={root / p}" for p in locks],
+                    *[f"--lockfile={root / p}" for p in inputs],
                 ]
                 result = run(command, cwd=root, timeout=600)
             if result.returncode not in (0, 1):
                 if "api.osv.dev" in result.stderr and "Forbidden" in result.stderr:
                     raise TeateError("OSV API access denied by network policy: api.osv.dev")
+                for lock in inputs:
+                    marker = f'could not determine extractor suitable to this file: "{root / lock}"'
+                    if marker in result.stderr:
+                        raise TeateError(
+                            f"OSV cannot parse dependency file: {lock} (exit {result.returncode})"
+                        )
                 raise TeateError(
-                    f"osv-scanner exited {result.returncode}; check scanner/network availability"
+                    f"osv-scanner exited {result.returncode}; cause unconfirmed"
                 )
             raw = json.loads(result.stdout)
             findings = osv_findings(raw, root)
