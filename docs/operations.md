@@ -132,3 +132,4 @@ ruff check teate scripts tests
 
 実際のsandbox-runtimeを使う隔離テストは`TEATE_SANDBOX_INTEGRATION=1`で有効化します。
 隔離を起動できないホストでは保留し、安全設定を弱めて通しません。
+GitHub Actionsの実隔離テストはmacOSで実行し、スキップされた場合は成功と扱いません。Linuxの実隔離テストはGitHub Actionsでは実行していません。Linuxの隔離・修正・配備の動作は、別の対応環境で実テストが成功するまで未検証です。
